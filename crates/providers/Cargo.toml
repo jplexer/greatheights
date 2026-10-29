@@ -1,0 +1,14 @@
+[package]
+name = "greatheights-providers"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+greatheights-core.workspace = true
+dirs.workspace = true
+log.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
