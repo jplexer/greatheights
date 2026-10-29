@@ -13,6 +13,7 @@ pub fn run(run: &Run) -> io::Result<()> {
         Run::OpenUrl(url) => open(OsStr::new(url)),
         Run::RevealPath(path) => reveal(path),
         Run::Spawn { program, args } => spawn(Command::new(program).args(args)),
+        Run::CopyText(_) | Run::Quit => Err(io::Error::other("must be handled by the UI")),
     }
 }
 

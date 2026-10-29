@@ -17,6 +17,8 @@ pub use matcher::Matcher;
 #[derive(Clone, Debug)]
 pub struct Item {
     /// Stable identifier, used to remember how often the item is picked.
+    /// Leave empty for results that shouldn't be remembered, such as anything
+    /// echoing the query back.
     pub id: String,
     pub title: String,
     pub subtitle: Option<String>,
@@ -31,12 +33,16 @@ pub enum Icon {
     None,
     /// A PNG/SVG file on disk.
     Image(PathBuf),
+    /// A short symbol drawn in a tile, for results that aren't files.
+    Glyph(&'static str),
 }
 
 #[derive(Clone, Debug)]
 pub struct Action {
     pub title: String,
     pub run: Run,
+    /// Hard-to-undo actions (restart, shut down) run on a second Enter.
+    pub confirm: bool,
 }
 
 impl Action {
@@ -44,7 +50,13 @@ impl Action {
         Self {
             title: title.into(),
             run,
+            confirm: false,
         }
+    }
+
+    pub fn confirmed(mut self) -> Self {
+        self.confirm = true;
+        self
     }
 }
 
@@ -56,6 +68,10 @@ pub enum Run {
     RevealPath(PathBuf),
     OpenUrl(String),
     Spawn { program: String, args: Vec<String> },
+    /// Handled by the UI, which owns the clipboard.
+    CopyText(String),
+    /// Handled by the UI.
+    Quit,
 }
 
 pub trait Provider: Send + Sync {

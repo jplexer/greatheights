@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use greatheights_core::{Engine, Frecency};
-use greatheights_providers::AppProvider;
+use greatheights_providers::{AppProvider, CalcProvider, SystemProvider, WebProvider};
 use gpui::Application;
 
 use crate::theme::Theme;
@@ -36,7 +36,12 @@ fn build_engine() -> Engine {
     let cache = app_dir(dirs::cache_dir());
     let data = app_dir(dirs::data_dir());
     Engine::new(
-        vec![Arc::new(AppProvider::new(cache.join("icons")))],
+        vec![
+            Arc::new(AppProvider::new(cache.join("icons"))),
+            Arc::new(SystemProvider::new()),
+            Arc::new(CalcProvider::new()),
+            Arc::new(WebProvider::new()),
+        ],
         Frecency::load(data.join("frecency.json")),
     )
 }

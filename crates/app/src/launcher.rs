@@ -1,9 +1,9 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use greatheights_core::{Engine, Icon, Item};
+use greatheights_core::{Engine, Icon, Item, Run};
 use gpui::{
-    App, Context, Div, Entity, FocusHandle, Focusable, KeyBinding, MouseMoveEvent, ScrollStrategy,
+    App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable, KeyBinding, MouseMoveEvent, ScrollStrategy,
     SharedString,
     Pixels, Point, Stateful, Subscription, UniformListScrollHandle, Window, actions, div, img,
     prelude::*, px,
@@ -45,6 +45,8 @@ pub struct Launcher {
     engine: Arc<Engine>,
     results: Vec<Item>,
     selected: usize,
+    /// The selected item's action awaiting a second Enter, if any.
+    confirming: Option<usize>,
     scroll: UniformListScrollHandle,
     /// Where the pointer was last seen, so rows moving under a still pointer
     /// don't steal the selection from the keyboard.
@@ -73,6 +75,7 @@ impl Launcher {
             engine,
             results: Vec::new(),
             selected: 0,
+            confirming: None,
             scroll: UniformListScrollHandle::new(),
             last_mouse: None,
             _subscriptions: subscriptions,
@@ -84,6 +87,7 @@ impl Launcher {
         self.input.update(cx, |input, cx| input.set_text("", cx));
         self.results.clear();
         self.selected = 0;
+        self.confirming = None;
         self.last_mouse = None;
         platform::set_content_height(window, BAR_HEIGHT, cx);
     }
@@ -97,6 +101,7 @@ impl Launcher {
         let query = self.input.read(cx).text().to_owned();
         self.results = self.engine.search(&query);
         self.selected = 0;
+        self.confirming = None;
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         platform::set_content_height(window, content_height(self.results.len()), cx);
         cx.notify();
@@ -105,6 +110,7 @@ impl Launcher {
     fn select(&mut self, index: usize, cx: &mut Context<Self>) {
         if index != self.selected {
             self.selected = index;
+            self.confirming = None;
             self.scroll.scroll_to_item(index, ScrollStrategy::Top);
             cx.notify();
         }
@@ -131,10 +137,27 @@ impl Launcher {
         let Some(item) = self.results.get(self.selected) else {
             return;
         };
-        if action >= item.actions.len() {
+        let Some(chosen) = item.actions.get(action) else {
+            return;
+        };
+        if chosen.confirm && self.confirming != Some(action) {
+            self.confirming = Some(action);
+            cx.notify();
             return;
         }
-        self.engine.execute(item, action);
+        self.confirming = None;
+        let run = chosen.run.clone();
+        match run {
+            Run::CopyText(text) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                self.engine.record(item);
+            }
+            Run::Quit => {
+                cx.quit();
+                return;
+            }
+            _ => self.engine.execute(item, action),
+        }
         cx.defer(|cx| {
             window::hide(cx);
         });
@@ -155,7 +178,25 @@ impl Launcher {
         let item = &self.results[index];
         let icon = match &item.icon {
             Icon::Image(path) => img(path.clone()).size(px(ICON_SIZE)).into_any_element(),
+            Icon::Glyph(glyph) => div()
+                .size(px(ICON_SIZE))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(7.))
+                .bg(theme.row_selected)
+                .text_size(px(16.))
+                .text_color(theme.text_muted)
+                .child(*glyph)
+                .into_any_element(),
             Icon::None => div().size(px(ICON_SIZE)).into_any_element(),
+        };
+
+        let confirming = index == self.selected && self.confirming.is_some();
+        let subtitle = if confirming {
+            Some("Press ↵ again to confirm".to_owned())
+        } else {
+            item.subtitle.clone()
         };
 
         div()
@@ -177,11 +218,11 @@ impl Launcher {
                     .text_size(px(15.))
                     .child(item.title.clone()),
             )
-            .children(item.subtitle.clone().map(|subtitle| {
+            .children(subtitle.map(|subtitle| {
                 div()
                     .flex_none()
                     .text_size(px(13.))
-                    .text_color(theme.text_muted)
+                    .text_color(if confirming { theme.accent } else { theme.text_muted })
                     .child(subtitle)
             }))
             .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {

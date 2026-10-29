@@ -1762,6 +1762,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fend-core"
+version = "1.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bf10938a7681e32b5b7d82ada720a04837f120e671c1e653309053e92c9e1e2"
+
+[[package]]
 name = "filedescriptor"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2518,11 +2524,14 @@ name = "greatheights-providers"
 version = "0.1.0"
 dependencies = [
  "dirs 6.0.0",
+ "fend-core",
  "greatheights-core",
  "log",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -33,7 +33,7 @@ impl Engine {
             .collect();
 
         let frecency = self.frecency.lock().unwrap();
-        for item in &mut items {
+        for item in items.iter_mut().filter(|item| !item.id.is_empty()) {
             item.score += frecency.bonus(&item.id);
         }
         drop(frecency);
@@ -62,6 +62,13 @@ impl Engine {
             log::error!("failed to run {:?}: {err}", action.run);
             return;
         }
-        self.frecency.lock().unwrap().record(&item.id);
+        self.record(item);
+    }
+
+    /// Remembers that the item was picked, for items the UI runs itself.
+    pub fn record(&self, item: &Item) {
+        if !item.id.is_empty() {
+            self.frecency.lock().unwrap().record(&item.id);
+        }
     }
 }
