@@ -7,12 +7,14 @@ mod engine;
 mod frecency;
 mod matcher;
 pub mod os;
+mod settings;
 
 use std::path::PathBuf;
 
 pub use engine::Engine;
 pub use frecency::Frecency;
 pub use matcher::Matcher;
+pub use settings::{AgentConfig, Settings, settings_path};
 
 #[derive(Clone, Debug)]
 pub struct Item {
@@ -72,6 +74,8 @@ pub enum Run {
     CopyText(String),
     /// Handled by the UI.
     Quit,
+    /// Ask the configured agent; handled by the UI.
+    Ask(String),
 }
 
 pub trait Provider: Send + Sync {

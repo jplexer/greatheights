@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 greatheights-core.workspace = true
+greatheights-ai.workspace = true
 greatheights-providers.workspace = true
 async-channel.workspace = true
 dirs.workspace = true

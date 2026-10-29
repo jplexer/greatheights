@@ -1,0 +1,13 @@
+[package]
+name = "greatheights-ai"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+greatheights-core.workspace = true
+agent-client-protocol.workspace = true
+async-channel.workspace = true
+async-io.workspace = true
+futures.workspace = true
+log.workspace = true
+serde_json.workspace = true

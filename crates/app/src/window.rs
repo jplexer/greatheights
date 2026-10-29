@@ -2,9 +2,11 @@
 //! hotkey doesn't pay for a new window and renderer each time. Hiding clears
 //! the query, so every invocation starts empty.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use greatheights_core::Engine;
+use greatheights_ai::Asker;
+use greatheights_core::{Engine, Settings};
 use gpui::{
     App, AppContext, Bounds, Focusable, Global, ImgResourceLoader, Resource, WindowBounds,
     WindowHandle, WindowKind, WindowOptions, point, px, size,
@@ -21,6 +23,19 @@ const TOP_OFFSET: f32 = 0.22;
 pub struct EngineHandle(pub Arc<Engine>);
 
 impl Global for EngineHandle {}
+
+pub struct AskerHandle(pub Arc<Asker>);
+
+impl Global for AskerHandle {}
+
+/// The settings file and its contents, re-read every time the launcher opens
+/// so edits apply without a restart.
+pub struct Config {
+    pub path: PathBuf,
+    pub settings: Settings,
+}
+
+impl Global for Config {}
 
 #[derive(Default)]
 struct State {
@@ -75,6 +90,11 @@ pub fn show(cx: &mut App) {
     let engine = cx.global::<EngineHandle>().0.clone();
     refresh(engine.clone(), cx);
     cx.set_global(Theme::for_appearance(cx.window_appearance()));
+    let path = cx.global::<Config>().path.clone();
+    cx.set_global(Config {
+        settings: Settings::load(&path),
+        path,
+    });
 
     let handle = match cx.default_global::<State>().handle {
         Some(handle) => handle,
@@ -102,7 +122,10 @@ pub fn show(cx: &mut App) {
             window.focus(&launcher.focus_handle(cx));
             #[cfg(debug_assertions)]
             if let Ok(query) = std::env::var("GREATHEIGHTS_QUERY") {
-                launcher.set_query(query, cx);
+                launcher.set_query(query.clone(), cx);
+                if std::env::var_os("GREATHEIGHTS_ASK").is_some() {
+                    launcher.debug_ask(query, window, cx);
+                }
             }
         });
         if let Err(err) = shown {

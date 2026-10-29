@@ -27,6 +27,32 @@ Besides apps, the bar understands:
 - **System commands**: lock, sleep, restart, shut down, log out, empty
   trash, toggle dark mode. Restart, shut down and log out ask for a second ↵.
 
+## Quick Ask
+
+Press <kbd>Tab</kbd> to ask an AI agent about whatever you typed, or start
+the query with `?`. Answers stream in below the bar; <kbd>↵</kbd> copies
+them.
+
+Any [Agent Client Protocol](https://agentclientprotocol.com) agent works, so
+you can use the Claude, Codex or Gemini subscription you already have. There
+is no default: pick one in the settings file (search "Greatheights
+Settings"), which lives at `~/Library/Application Support/greatheights/settings.json`
+on macOS. It starts with `"agent": null` and a few examples to copy:
+
+```json
+{
+  "agent": {
+    "name": "Claude",
+    "command": "npx",
+    "args": ["-y", "@agentclientprotocol/claude-agent-acp@latest"]
+  }
+}
+```
+
+The agent signs in with its own CLI (for Claude, the Claude Code login).
+Each question runs in an empty scratch folder and every permission request
+is declined, so agents can answer but never edit files or run commands.
+
 On Wayland, apps can't register global shortcuts; bind a compositor shortcut
 instead (toggle command coming soon).
 
@@ -34,4 +60,5 @@ instead (toggle command coming soon).
 
 - `crates/core`: result model, provider trait, fuzzy ranking, frecency
 - `crates/providers`: result sources (apps, calculator, web/bangs, system commands)
+- `crates/ai`: Quick Ask over ACP, with a scripted mock agent for tests
 - `crates/app`: the GPUI window, text input and hotkey

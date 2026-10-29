@@ -11,6 +11,7 @@ pub struct Theme {
     pub row_selected: Hsla,
     pub accent: Hsla,
     pub selection: Hsla,
+    pub error: Hsla,
 }
 
 impl Global for Theme {}
@@ -34,6 +35,7 @@ impl Theme {
                 row_selected: hsla(0., 0., 1., 0.10),
                 accent: hsla(212. / 360., 1., 0.62, 1.),
                 selection: hsla(212. / 360., 1., 0.62, 0.35),
+                error: hsla(2. / 360., 0.9, 0.68, 1.),
             },
             WindowAppearance::Light | WindowAppearance::VibrantLight => Self {
                 background: hsla(0., 0., 0.98, 0.25),
@@ -43,6 +45,7 @@ impl Theme {
                 row_selected: hsla(0., 0., 0., 0.07),
                 accent: hsla(212. / 360., 1., 0.48, 1.),
                 selection: hsla(212. / 360., 1., 0.48, 0.25),
+                error: hsla(2. / 360., 0.75, 0.48, 1.),
             },
         }
     }
