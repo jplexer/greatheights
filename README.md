@@ -19,7 +19,9 @@ selected result, <kbd>⌘ ↵</kbd> runs its secondary action (show in Finder),
 
 Besides apps, the bar understands:
 
-- **Math and units**: `12*7`, `5 km in mi` (↵ copies the result)
+- **Math, units and currency**: `12*7`, `5 km in mi`, `100 usd to eur`
+  (↵ copies the result). Exchange rates are the European Central Bank's
+  daily reference rates (about 30 currencies), cached for offline use.
 - **Bangs**: `!gh gpui` or `gpui !gh`, using [Kagi's bang list](https://github.com/kagisearch/bangs)
   (MIT, bundled). Anything else can be searched on Startpage.
 - **System commands**: lock, sleep, restart, shut down, log out, empty

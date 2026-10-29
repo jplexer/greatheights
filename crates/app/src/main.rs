@@ -39,7 +39,7 @@ fn build_engine() -> Engine {
         vec![
             Arc::new(AppProvider::new(cache.join("icons"))),
             Arc::new(SystemProvider::new()),
-            Arc::new(CalcProvider::new()),
+            Arc::new(CalcProvider::new(cache.join("rates.json"))),
             Arc::new(WebProvider::new()),
         ],
         Frecency::load(data.join("frecency.json")),
