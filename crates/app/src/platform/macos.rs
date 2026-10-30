@@ -1,72 +1,26 @@
+use std::time::Duration;
+
 use gpui::{Context, Window, WindowBackgroundAppearance};
 use objc2::rc::Retained;
-use objc2::runtime::AnyClass;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSGlassEffectView,
-    NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,
-    NSVisualEffectView, NSWindow, NSWindowAnimationBehavior, NSWindowButton, NSWindowOrderingMode,
+    NSApplication, NSApplicationActivationPolicy, NSView, NSWindow, NSWindowAnimationBehavior,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{NSRect, NSSize};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-pub const UI_FONT: &str = ".SystemUIFont";
-
-/// We draw our own backdrop view; GPUI's `Blurred` strips the blur on recent macOS.
+/// Transparent, so the launcher can draw its own small-radius corners.
 pub const WINDOW_BACKGROUND: WindowBackgroundAppearance = WindowBackgroundAppearance::Transparent;
 
-/// The native backdrop already separates the window from what's behind it.
-pub const HAS_BACKDROP: bool = true;
-
-const CORNER_RADIUS: f64 = 18.;
+/// Whether the launcher panel draws rounded corners itself.
+pub const ROUNDED_PANEL: bool = true;
 
 /// Runs as an accessory: no Dock icon, no menu bar.
 pub fn init() {
     let mtm = MainThreadMarker::new().expect("init must run on the main thread");
     NSApplication::sharedApplication(mtm)
         .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-}
-
-pub fn configure_window(window: &Window) {
-    let Some(ns_window) = ns_window(window) else {
-        return;
-    };
-    for button in [
-        NSWindowButton::CloseButton,
-        NSWindowButton::MiniaturizeButton,
-        NSWindowButton::ZoomButton,
-    ] {
-        if let Some(button) = ns_window.standardWindowButton(button) {
-            button.setHidden(true);
-        }
-    }
-
-    // Appear and disappear instantly. AppKit's fade would otherwise show
-    // the cleared, bar-sized content stretched over the full window.
-    ns_window.setAnimationBehavior(NSWindowAnimationBehavior::None);
-
-    let Some(content) = ns_window.contentView() else {
-        return;
-    };
-    let backdrop = backdrop_view(content.bounds(), ns_window.mtm());
-    backdrop.setAutoresizingMask(
-        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
-    );
-    content.addSubview_positioned_relativeTo(&backdrop, NSWindowOrderingMode::Below, None);
-}
-
-/// Liquid Glass where available (macOS 26+), a vibrancy blur otherwise.
-fn backdrop_view(frame: NSRect, mtm: MainThreadMarker) -> Retained<NSView> {
-    if AnyClass::get(c"NSGlassEffectView").is_some() {
-        let glass = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), frame);
-        glass.setCornerRadius(CORNER_RADIUS);
-        return Retained::into_super(glass);
-    }
-    let effect = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame);
-    effect.setMaterial(NSVisualEffectMaterial::HUDWindow);
-    effect.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-    effect.setState(NSVisualEffectState::Active);
-    Retained::into_super(effect)
 }
 
 /// The native window, for showing and hiding it without destroying it.
@@ -87,6 +41,20 @@ impl NativeWindow {
     pub fn hide(&self) {
         self.0.orderOut(None);
     }
+
+    /// Turns a freshly created launcher window into a Zed-style panel.
+    /// Borderless, so macOS doesn't clip it to its large window corner
+    /// radius (the panel draws its own); GPUI's window classes still accept
+    /// key status, and the panel stays non-activating.
+    pub fn configure_as_panel(&self) {
+        self.0
+            .setStyleMask(NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel);
+        self.0.setHasShadow(true);
+        // Appear and disappear instantly. AppKit's fade would otherwise show
+        // the cleared, bar-sized content stretched over the full window.
+        self.0.setAnimationBehavior(NSWindowAnimationBehavior::None);
+    }
+
 
     /// Asks to make the app frontmost so a regular window (settings) can
     /// take focus. An accessory app can't reliably come forward, so it
@@ -134,7 +102,7 @@ pub fn set_content_height<T: 'static>(window: &mut Window, height: f32, cx: &mut
     };
     // Resizing synchronously re-enters GPUI's resize callback while the window
     // is borrowed, so apply it on the next tick like GPUI's own `resize` does.
-    cx.spawn(async move |_, _| {
+    cx.spawn(async move |_, cx| {
         let frame = ns_window.frame();
         let content = ns_window.contentRectForFrameRect(frame);
         if content.size.height == height as f64 {
@@ -146,6 +114,10 @@ pub fn set_content_height<T: 'static>(window: &mut Window, height: f32, cx: &mut
         ));
         new_frame.origin.y = frame.origin.y + frame.size.height - new_frame.size.height;
         ns_window.setFrame_display(new_frame, true);
+        // The shadow of a transparent window follows what's drawn, so
+        // recompute it once the resized content has been painted.
+        cx.background_executor().timer(Duration::from_millis(32)).await;
+        ns_window.invalidateShadow();
     })
     .detach();
 }

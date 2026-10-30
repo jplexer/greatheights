@@ -9,20 +9,12 @@ pub use macos::*;
 mod fallback {
     use gpui::{Context, Window, WindowBackgroundAppearance, px, size};
 
-    pub const UI_FONT: &str = if cfg!(target_os = "windows") {
-        "Segoe UI"
-    } else {
-        "sans-serif"
-    };
+    /// Transparent windows vary by compositor, so stay opaque and square.
+    pub const WINDOW_BACKGROUND: WindowBackgroundAppearance = WindowBackgroundAppearance::Opaque;
 
-    pub const WINDOW_BACKGROUND: WindowBackgroundAppearance = WindowBackgroundAppearance::Blurred;
-
-    /// Blur support varies by compositor, so the theme stays mostly opaque.
-    pub const HAS_BACKDROP: bool = false;
+    pub const ROUNDED_PANEL: bool = false;
 
     pub fn init() {}
-
-    pub fn configure_window(_window: &Window) {}
 
     /// GPUI can't hide a window here, so there is no native handle: the
     /// launcher closes the window on hide and reopens it on show.
@@ -36,6 +28,8 @@ mod fallback {
         pub fn show(&self) {}
 
         pub fn hide(&self) {}
+
+        pub fn configure_as_panel(&self) {}
 
         pub fn request_activation(&self) {}
 

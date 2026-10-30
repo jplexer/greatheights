@@ -3,17 +3,18 @@
 use greatheights_ai::Ask;
 use gpui::{IntoElement, ParentElement, Styled, Task, div, prelude::*, px};
 
+use crate::launcher::kbd;
 use crate::theme::Theme;
 
-const PADDING: f32 = 16.;
+const PADDING: f32 = 12.;
 const LINE_HEIGHT: f32 = 20.;
 const FOOTER_HEIGHT: f32 = 18.;
 const GAP: f32 = 10.;
 /// Taller answers scroll.
 const MAX_TEXT_HEIGHT: f32 = 360.;
-/// Roughly how many characters of 14px system text fit on a line of the
-/// answer panel; used to size the window before layout.
-const CHARS_PER_LINE: usize = 90;
+/// Roughly how many characters of 14px text fit on a line of the answer
+/// panel; used to size the window before layout.
+const CHARS_PER_LINE: usize = 80;
 
 pub enum Status {
     Waiting,
@@ -66,16 +67,30 @@ impl Answer {
             Some(err) => (err, theme.error),
             None => (self.agent.clone(), theme.text_muted),
         };
-        let hints = match self.status {
-            Status::Done => "↵ Copy   esc Close",
-            _ => "esc Close",
+        let hint = |key, label| {
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(kbd(key, theme))
+                .child(label)
         };
+        let hints = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap_3()
+            .text_color(theme.text_muted)
+            .when(matches!(self.status, Status::Done), |hints| {
+                hints.child(hint("↵", "Copy"))
+            })
+            .child(hint("esc", "Close"));
 
         div()
             .flex_none()
             .flex()
             .flex_col()
-            .child(div().h(px(1.)).flex_none().bg(theme.border))
+            .child(div().h(px(1.)).flex_none().bg(theme.border_variant))
             .child(
                 div()
                     .p(px(PADDING))
@@ -106,12 +121,7 @@ impl Answer {
                                     .text_color(status_color)
                                     .child(status),
                             )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_color(theme.text_muted)
-                                    .child(hints),
-                            ),
+                            .child(hints),
                     ),
             )
     }

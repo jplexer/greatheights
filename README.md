@@ -54,3 +54,10 @@ instead (toggle command coming soon).
 - `crates/providers`: result sources (apps, calculator, web/bangs, system commands)
 - `crates/ai`: Quick Ask over ACP, with a scripted mock agent for tests
 - `crates/app`: the GPUI window, text input and hotkey
+
+## Credits
+
+The UI follows Zed's default One Dark and One Light themes and bundles the
+same fonts Zed does: [IBM Plex Sans](https://github.com/IBM/plex) and
+[Lilex](https://github.com/mishamyrt/Lilex), both under the SIL Open Font
+License (see `crates/app/assets/fonts`).

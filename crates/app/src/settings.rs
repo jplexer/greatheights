@@ -13,7 +13,7 @@ use gpui::{
 
 use crate::input::{InputChanged, TextInput};
 use crate::platform;
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
 use crate::window::{self, AskerHandle, Config};
 
 actions!(settings, [Close, NextField]);
@@ -46,7 +46,7 @@ pub fn open(cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(540.), px(680.)),
+            size(px(540.), px(720.)),
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
@@ -380,9 +380,9 @@ impl SettingsView {
             .flex()
             .items_center()
             .gap_3()
-            .rounded(px(8.))
+            .rounded(px(4.))
             .when(selected, |row| row.bg(theme.row_selected))
-            .hover(|row| row.bg(theme.row_selected))
+            .when(!selected, |row| row.hover(|row| row.bg(theme.row_hover)))
             .child(
                 div()
                     .size(px(16.))
@@ -429,10 +429,11 @@ impl SettingsView {
                     .px_2()
                     .flex()
                     .items_center()
-                    .rounded(px(6.))
+                    .rounded(px(4.))
                     .bg(theme.field)
                     .border_1()
                     .border_color(theme.border)
+                    .font_family(theme::MONO_FONT)
                     .text_size(px(13.))
                     .line_height(px(18.))
                     .on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
@@ -544,7 +545,7 @@ impl SettingsView {
                     .flex_none()
                     .px_3()
                     .py_1()
-                    .rounded(px(6.))
+                    .rounded(px(4.))
                     .bg(theme.field)
                     .border_1()
                     .border_color(theme.border)
@@ -552,7 +553,7 @@ impl SettingsView {
                     .when(!can_test, |button| button.text_color(theme.text_muted))
                     .when(can_test, |button| {
                         button
-                            .hover(|button| button.bg(theme.row_selected))
+                            .hover(|button| button.bg(theme.row_hover))
                             .on_click(cx.listener(|this, _, window, cx| this.test(window, cx)))
                     })
                     .child("Test"),
@@ -602,7 +603,7 @@ fn pill(
         .id(id)
         .px_3()
         .py_1()
-        .rounded_full()
+        .rounded(px(4.))
         .border_1()
         .text_size(px(13.))
         .map(|pill| {
@@ -611,7 +612,7 @@ fn pill(
             } else {
                 pill.bg(theme.field)
                     .border_color(theme.border)
-                    .hover(|pill| pill.bg(theme.row_selected))
+                    .hover(|pill| pill.bg(theme.row_hover))
             }
         })
         .child(label.into())
@@ -626,13 +627,13 @@ impl Render for Tooltip {
         div()
             .px_2()
             .py_1()
-            .rounded(px(6.))
-            .bg(theme.surface)
+            .rounded(px(4.))
+            .bg(theme.background)
             .border_1()
             .border_color(theme.border)
             .text_size(px(12.))
             .text_color(theme.text)
-            .font_family(platform::UI_FONT)
+            .font_family(theme::UI_FONT)
             .child(self.0.clone())
     }
 }
@@ -646,7 +647,7 @@ impl Focusable for SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        let (text, surface, border) = (theme.text, theme.surface, theme.border);
+        let (text, surface, border) = (theme.text, theme.background, theme.border_variant);
         let search = section(
             "Search",
             "Where a query goes when nothing else matches. Bangs like !g always work.",
@@ -708,7 +709,7 @@ impl Render for SettingsView {
             .id("settings")
             .size_full()
             .overflow_y_scroll()
-            .font_family(platform::UI_FONT)
+            .font_family(theme::UI_FONT)
             .bg(surface)
             .text_color(text)
             .child(

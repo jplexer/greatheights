@@ -491,7 +491,7 @@ impl Element for TextElement {
 
         let theme = cx.global::<Theme>();
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), theme.text_muted)
+            (input.placeholder.clone(), theme.text_placeholder)
         } else {
             (content, style.color)
         };

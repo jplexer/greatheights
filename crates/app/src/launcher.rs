@@ -11,7 +11,7 @@ use gpui::{
 
 use crate::answer::{Answer, Status};
 use crate::input::{InputChanged, TextInput};
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
 use crate::window::{AskerHandle, Config};
 use crate::{platform, settings, window};
 
@@ -22,11 +22,15 @@ actions!(
 
 const CONTEXT: &str = "Launcher";
 
-pub const BAR_HEIGHT: f32 = 56.;
-const ROW_HEIGHT: f32 = 44.;
-const ICON_SIZE: f32 = 28.;
-const MAX_VISIBLE_ROWS: usize = 8;
-const LIST_PADDING: f32 = 6.;
+const BAR_HEIGHT: f32 = 44.;
+/// The panel's border, drawn inside the window on each side.
+const BORDER: f32 = 1.;
+/// The window height with just the search bar.
+pub const EMPTY_HEIGHT: f32 = BAR_HEIGHT + 2. * BORDER;
+const ROW_HEIGHT: f32 = 32.;
+const ICON_SIZE: f32 = 18.;
+const MAX_VISIBLE_ROWS: usize = 9;
+const LIST_PADDING: f32 = 4.;
 /// Queries starting with this ask the agent instead of searching.
 const ASK_PREFIX: char = '?';
 
@@ -97,7 +101,7 @@ impl Launcher {
         self.selected = 0;
         self.confirming = None;
         self.last_mouse = None;
-        platform::set_content_height(window, BAR_HEIGHT, cx);
+        platform::set_content_height(window, EMPTY_HEIGHT, cx);
     }
 
     #[cfg(debug_assertions)]
@@ -133,7 +137,7 @@ impl Launcher {
 
     fn fit_window(&self, window: &mut Window, cx: &mut Context<Self>) {
         let height = match &self.answer {
-            Some(answer) => BAR_HEIGHT + answer.height(),
+            Some(answer) => EMPTY_HEIGHT + answer.height(),
             None => content_height(self.results.len()),
         };
         platform::set_content_height(window, height, cx);
@@ -298,16 +302,15 @@ impl Launcher {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(7.))
-                .bg(theme.row_selected)
-                .text_size(px(16.))
+                .text_size(px(14.))
                 .text_color(theme.text_muted)
                 .child(*glyph)
                 .into_any_element(),
             Icon::None => div().size(px(ICON_SIZE)).into_any_element(),
         };
 
-        let confirming = index == self.selected && self.confirming.is_some();
+        let selected = index == self.selected;
+        let confirming = selected && self.confirming.is_some();
         let subtitle = if confirming {
             Some("Press ↵ again to confirm".to_owned())
         } else {
@@ -321,25 +324,26 @@ impl Launcher {
             .px_2()
             .flex()
             .items_center()
-            .gap_3()
-            .rounded(px(8.))
-            .when(index == self.selected, |row| row.bg(theme.row_selected))
+            .gap_2()
+            .rounded(px(4.))
+            .when(selected, |row| row.bg(theme.row_selected))
             .child(icon)
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_size(px(15.))
+                    .text_size(px(14.))
                     .child(item.title.clone()),
             )
             .children(subtitle.map(|subtitle| {
                 div()
                     .flex_none()
-                    .text_size(px(13.))
+                    .text_size(px(12.))
                     .text_color(if confirming { theme.accent } else { theme.text_muted })
                     .child(subtitle)
             }))
+            .when(selected, |row| row.child(kbd("↵", theme)))
             .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
                 let moved = this.last_mouse.is_some_and(|last| last != event.position);
                 this.last_mouse = Some(event.position);
@@ -384,15 +388,34 @@ fn ask_item(question: &str, cx: &App) -> Item {
     }
 }
 
+/// A key hint, styled like Zed's keybinding labels.
+pub fn kbd(key: &'static str, theme: &Theme) -> Div {
+    div()
+        .flex_none()
+        .h(px(18.))
+        .min_w(px(18.))
+        .px_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(4.))
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.field)
+        .text_size(px(11.))
+        .text_color(theme.text_muted)
+        .child(key)
+}
+
 fn list_height(results: usize) -> f32 {
     LIST_PADDING * 2. + results.min(MAX_VISIBLE_ROWS) as f32 * ROW_HEIGHT
 }
 
 fn content_height(results: usize) -> f32 {
     if results == 0 {
-        BAR_HEIGHT
+        EMPTY_HEIGHT
     } else {
-        BAR_HEIGHT + 1. + list_height(results)
+        EMPTY_HEIGHT + 1. + list_height(results)
     }
 }
 
@@ -419,23 +442,27 @@ impl Render for Launcher {
             .overflow_hidden()
             .flex()
             .flex_col()
-            .font_family(platform::UI_FONT)
+            .font_family(theme::UI_FONT)
             .bg(theme.background)
+            .border_1()
+            .border_color(theme.border)
+            .when(platform::ROUNDED_PANEL, |root| root.rounded(px(8.)))
             .text_color(theme.text)
             .child(
                 div()
                     .h(px(BAR_HEIGHT))
                     .flex_none()
-                    .px_4()
+                    .px_3()
                     .flex()
                     .items_center()
-                    .text_size(px(22.))
-                    .line_height(px(28.))
+                    .font_family(theme::MONO_FONT)
+                    .text_size(px(16.))
+                    .line_height(px(22.))
                     .child(self.input.clone()),
             )
             .children(self.answer.as_ref().map(|answer| answer.render(theme)))
             .when(self.answer.is_none() && !self.results.is_empty(), |root| {
-                root.child(div().h(px(1.)).flex_none().bg(theme.border))
+                root.child(div().h(px(1.)).flex_none().bg(theme.border_variant))
                     .child(
                         // A fixed height, so the frame drawn before the window
                         // finishes resizing is clipped rather than squashed.

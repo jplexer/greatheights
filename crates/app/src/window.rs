@@ -17,7 +17,7 @@ use crate::launcher::{self, Launcher};
 use crate::platform;
 use crate::theme::Theme;
 
-const WIDTH: f32 = 720.;
+const WIDTH: f32 = 640.;
 /// Fraction of the screen height above the bar.
 const TOP_OFFSET: f32 = 0.22;
 
@@ -112,10 +112,10 @@ pub fn show(cx: &mut App) {
         cx,
     );
 
-    let handle = match cx.default_global::<State>().handle {
-        Some(handle) => handle,
+    let (handle, fresh) = match cx.default_global::<State>().handle {
+        Some(handle) => (handle, false),
         None => match open(engine, cx) {
-            Some(handle) => handle,
+            Some(handle) => (handle, true),
             None => return,
         },
     };
@@ -129,6 +129,11 @@ pub fn show(cx: &mut App) {
 
     cx.spawn(async move |cx| {
         if let Some(native) = &native {
+            // Restyling re-enters GPUI too, so it happens here, before the
+            // window is first shown.
+            if fresh {
+                native.configure_as_panel();
+            }
             native.show();
         }
         let shown = handle.update(cx, |launcher, window, cx| {
@@ -202,14 +207,15 @@ fn open(engine: Arc<Engine>, cx: &mut App) -> Option<WindowHandle<Launcher>> {
             area.origin.x + (area.size.width - px(WIDTH)) / 2.,
             area.origin.y + area.size.height * TOP_OFFSET,
         ),
-        size(px(WIDTH), px(launcher::BAR_HEIGHT)),
+        size(px(WIDTH), px(launcher::EMPTY_HEIGHT)),
     );
 
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: None,
-        focus: true,
-        show: true,
+        // On macOS the window is shown once it's been made a panel; see `show`.
+        focus: !cfg!(target_os = "macos"),
+        show: !cfg!(target_os = "macos"),
         kind: WindowKind::PopUp,
         is_movable: false,
         is_resizable: false,
@@ -221,7 +227,6 @@ fn open(engine: Arc<Engine>, cx: &mut App) -> Option<WindowHandle<Launcher>> {
     };
 
     cx.open_window(options, |window, cx| {
-        platform::configure_window(window);
         cx.new(|cx| Launcher::new(engine, window, cx))
     })
     .inspect_err(|err| log::error!("failed to open launcher window: {err}"))

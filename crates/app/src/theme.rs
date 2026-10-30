@@ -1,64 +1,85 @@
-use gpui::{App, Global, Hsla, WindowAppearance, hsla};
+//! Colors and fonts, after Zed's default One Dark and One Light themes.
 
-use crate::platform;
+use std::borrow::Cow;
+
+use gpui::{App, Global, Hsla, Rgba, WindowAppearance, rgb, rgba};
+
+/// UI text, as in Zed.
+pub const UI_FONT: &str = "IBM Plex Sans";
+/// Text you type, as in Zed's editors.
+pub const MONO_FONT: &str = "Lilex";
 
 pub struct Theme {
-    /// Tint over the blurred window background.
+    /// Panels: the launcher and settings.
     pub background: Hsla,
+    /// Text fields and buttons.
+    pub field: Hsla,
     pub border: Hsla,
+    /// Dividers inside a panel.
+    pub border_variant: Hsla,
     pub text: Hsla,
     pub text_muted: Hsla,
+    pub text_placeholder: Hsla,
+    pub row_hover: Hsla,
     pub row_selected: Hsla,
     pub accent: Hsla,
+    /// Selected text.
     pub selection: Hsla,
     pub error: Hsla,
-    /// Opaque background for regular windows such as settings.
-    pub surface: Hsla,
-    /// Background of text fields and buttons.
-    pub field: Hsla,
 }
 
 impl Global for Theme {}
 
+fn color(value: Rgba) -> Hsla {
+    value.into()
+}
+
 impl Theme {
     pub fn for_appearance(appearance: WindowAppearance) -> Self {
-        let mut theme = Self::base(appearance);
-        if !platform::HAS_BACKDROP {
-            theme.background.a = 0.96;
-        }
-        theme
-    }
-
-    fn base(appearance: WindowAppearance) -> Self {
         match appearance {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Self {
-                background: hsla(240. / 360., 0.06, 0.11, 0.25),
-                border: hsla(0., 0., 1., 0.08),
-                text: hsla(0., 0., 0.96, 1.),
-                text_muted: hsla(0., 0., 0.96, 0.45),
-                row_selected: hsla(0., 0., 1., 0.10),
-                accent: hsla(212. / 360., 1., 0.62, 1.),
-                selection: hsla(212. / 360., 1., 0.62, 0.35),
-                error: hsla(2. / 360., 0.9, 0.68, 1.),
-                surface: hsla(240. / 360., 0.06, 0.12, 1.),
-                field: hsla(0., 0., 1., 0.07),
+                background: color(rgb(0x2f343e)),
+                field: color(rgb(0x282c33)),
+                border: color(rgb(0x464b57)),
+                border_variant: color(rgb(0x363c46)),
+                text: color(rgb(0xdce0e5)),
+                text_muted: color(rgb(0xa9afbc)),
+                text_placeholder: color(rgb(0x878a98)),
+                row_hover: color(rgb(0x363c46)),
+                row_selected: color(rgb(0x454a56)),
+                accent: color(rgb(0x74ade8)),
+                selection: color(rgba(0x74ade83d)),
+                error: color(rgb(0xd07277)),
             },
             WindowAppearance::Light | WindowAppearance::VibrantLight => Self {
-                background: hsla(0., 0., 0.98, 0.25),
-                border: hsla(0., 0., 0., 0.08),
-                text: hsla(0., 0., 0.08, 1.),
-                text_muted: hsla(0., 0., 0.08, 0.45),
-                row_selected: hsla(0., 0., 0., 0.07),
-                accent: hsla(212. / 360., 1., 0.48, 1.),
-                selection: hsla(212. / 360., 1., 0.48, 0.25),
-                error: hsla(2. / 360., 0.75, 0.48, 1.),
-                surface: hsla(0., 0., 0.97, 1.),
-                field: hsla(0., 0., 0., 0.05),
+                background: color(rgb(0xebebec)),
+                field: color(rgb(0xfafafa)),
+                border: color(rgb(0xc9c9ca)),
+                border_variant: color(rgb(0xdfdfe0)),
+                text: color(rgb(0x242529)),
+                text_muted: color(rgb(0x58585a)),
+                text_placeholder: color(rgb(0x7e8086)),
+                row_hover: color(rgb(0xdfdfe0)),
+                row_selected: color(rgb(0xd3d3d4)),
+                accent: color(rgb(0x5c78e2)),
+                selection: color(rgba(0x5c78e23d)),
+                error: color(rgb(0xd36151)),
             },
         }
     }
 
     pub fn init(cx: &mut App) {
+        let fonts = [
+            include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf").as_slice(),
+            include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf").as_slice(),
+            include_bytes!("../assets/fonts/Lilex-Regular.ttf").as_slice(),
+        ];
+        if let Err(err) = cx
+            .text_system()
+            .add_fonts(fonts.into_iter().map(Cow::Borrowed).collect())
+        {
+            log::error!("couldn't load bundled fonts: {err}");
+        }
         cx.set_global(Self::for_appearance(cx.window_appearance()));
     }
 }
