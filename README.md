@@ -35,13 +35,18 @@ Besides apps, the bar understands:
   (↵ copies the result). Exchange rates are the European Central Bank's
   daily reference rates (about 30 currencies), cached for offline use.
 - **Bangs**: `!gh gpui` or `gpui !gh`, using [Kagi's bang list](https://github.com/kagisearch/bangs)
-  (MIT, bundled). Anything else can be searched with your chosen engine:
-  Startpage (default), Kagi, Google, DuckDuckGo, Bing or Ecosia.
+  (MIT, bundled), plus your own bangs from Settings, which take priority.
+  Anything else can be searched with your chosen engine: Startpage
+  (default), Kagi, Google, DuckDuckGo, Bing, Ecosia or any URL with `%s`.
 - **Snippets**: type `;` and a keyword, then ↵ copies the text. Built in:
   `;date`, `;time`, `;now`, `;uuid`, `;shrug`, `;lorem`; add your own in
   Settings.
 - **System commands**: lock, sleep, restart, shut down, log out, empty
   trash, toggle dark mode. Restart, shut down and log out ask for a second ↵.
+
+The calculator, system commands and web search can each be turned off in
+Settings, which also has extra app folders, hidden apps, a light/dark theme
+override and an option to reopen with the last query.
 
 ## Quick Ask
 

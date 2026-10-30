@@ -1,8 +1,10 @@
+use greatheights_core::Appearance;
 use gpui::{Context, Window, WindowBackgroundAppearance};
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSEvent, NSScreen, NSView, NSWindow,
+    NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
+    NSApplicationActivationPolicy, NSEvent, NSScreen, NSView, NSWindow,
     NSWindowAnimationBehavior, NSWindowButton,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
@@ -18,6 +20,23 @@ pub fn init() {
     let mtm = MainThreadMarker::new().expect("init must run on the main thread");
     NSApplication::sharedApplication(mtm)
         .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+}
+
+/// Makes native parts (title bars, the file picker) match the chosen
+/// appearance. GPUI reads the app's appearance too, so `System` must clear
+/// it rather than set the current one.
+pub fn set_appearance(appearance: Appearance) {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let name = match appearance {
+        Appearance::System => None,
+        // SAFETY: AppKit's appearance names are immutable statics.
+        Appearance::Light => Some(unsafe { NSAppearanceNameAqua }),
+        Appearance::Dark => Some(unsafe { NSAppearanceNameDarkAqua }),
+    };
+    let appearance = name.and_then(NSAppearance::appearanceNamed);
+    NSApplication::sharedApplication(mtm).setAppearance(appearance.as_deref());
 }
 
 /// The native window, for showing and hiding it without destroying it.

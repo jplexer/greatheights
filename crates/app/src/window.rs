@@ -1,13 +1,12 @@
 //! The launcher window is created once and then hidden and shown, so the
 //! hotkey doesn't pay for a new window and renderer each time. Hiding clears
-//! the query, so every invocation starts empty.
+//! the query unless the user asked to keep it.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use greatheights_ai::Asker;
 use greatheights_core::{Engine, Settings};
-use greatheights_providers::{SnippetProvider, WebProvider};
 use gpui::{
     App, AppContext, Bounds, Focusable, Global, ImgResourceLoader, Resource, WindowBounds,
     WindowHandle, WindowKind, WindowOptions, point, px, size,
@@ -15,7 +14,7 @@ use gpui::{
 
 use crate::launcher::{self, Launcher};
 use crate::platform;
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
 
 const WIDTH: f32 = 640.;
 /// Fraction of the screen height above the bar.
@@ -38,23 +37,25 @@ pub struct Config {
 
 impl Global for Config {}
 
-pub struct WebHandle(pub Arc<WebProvider>);
-
-impl Global for WebHandle {}
-
-pub struct SnippetsHandle(pub Arc<SnippetProvider>);
-
-impl Global for SnippetsHandle {}
-
 /// Installs new settings and passes them to the parts that cache them.
 pub fn set_config(config: Config, cx: &mut App) {
-    if let Some(web) = cx.try_global::<WebHandle>() {
-        web.0.set_engine(config.settings.search_engine);
-    }
-    if let Some(snippets) = cx.try_global::<SnippetsHandle>() {
-        snippets.0.set_snippets(config.settings.snippets.clone());
-    }
+    cx.global::<EngineHandle>().0.configure(&config.settings);
+    let appearance = config.settings.appearance;
     cx.set_global(config);
+    theme::apply(appearance, cx);
+}
+
+/// Changes the settings with `change` and saves them.
+pub fn update_settings(change: impl FnOnce(&mut Settings), cx: &mut App) {
+    let mut config = Config {
+        path: cx.global::<Config>().path.clone(),
+        settings: cx.global::<Config>().settings.clone(),
+    };
+    change(&mut config.settings);
+    if let Err(err) = config.settings.save(&config.path) {
+        log::error!("couldn't save settings to {}: {err}", config.path.display());
+    }
+    set_config(config, cx);
 }
 
 #[derive(Default)]
@@ -108,16 +109,16 @@ pub fn show(cx: &mut App) {
     }
 
     let engine = cx.global::<EngineHandle>().0.clone();
-    refresh(engine.clone(), cx);
-    cx.set_global(Theme::for_appearance(cx.window_appearance()));
     let path = cx.global::<Config>().path.clone();
-    set_config(
-        Config {
-            settings: Settings::load(&path),
-            path,
-        },
-        cx,
-    );
+    let settings = Settings::load(&path);
+    // Skip the reconfigure when nothing changed; it repaints every window.
+    if settings != cx.global::<Config>().settings {
+        set_config(Config { settings, path }, cx);
+    } else {
+        cx.set_global(Theme::current(cx));
+    }
+    // After configuring, so added app folders are scanned.
+    refresh(engine.clone(), cx);
 
     let (handle, fresh) = match cx.default_global::<State>().handle {
         Some(handle) => (handle, false),
@@ -150,6 +151,7 @@ pub fn show(cx: &mut App) {
                 window.activate_window();
             }
             window.focus(&launcher.focus_handle(cx));
+            launcher.on_show(window, cx);
             #[cfg(debug_assertions)]
             if let Ok(query) = std::env::var("GREATHEIGHTS_QUERY") {
                 launcher.set_query(query.clone(), cx);

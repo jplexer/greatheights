@@ -11,11 +11,13 @@ pub const REVEAL_LABEL: &str = "Show in Explorer";
 pub fn render_icon(_app: &Path, _out: &Path) {}
 
 /// Start Menu shortcuts are what Windows itself lists as installed apps.
-pub fn scan() -> Vec<AppEntry> {
+/// `extra` folders are searched for shortcuts the same way.
+pub fn scan(extra: &[PathBuf]) -> Vec<AppEntry> {
     let roots = ["ProgramData", "APPDATA"]
         .into_iter()
         .filter_map(std::env::var_os)
-        .map(|base| PathBuf::from(base).join(r"Microsoft\Windows\Start Menu\Programs"));
+        .map(|base| PathBuf::from(base).join(r"Microsoft\Windows\Start Menu\Programs"))
+        .chain(extra.iter().cloned());
 
     let mut apps = Vec::new();
     for root in roots {

@@ -7,20 +7,45 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     /// The global shortcut, in GPUI keystroke form (`alt-space`).
-    #[serde(default = "default_hotkey")]
     pub hotkey: String,
+    #[serde(deserialize_with = "lenient")]
+    pub appearance: Appearance,
+    /// Reopening the bar shows the last query, selected, instead of an
+    /// empty bar.
+    pub keep_last_query: bool,
     /// The ACP agent Quick Ask talks to. There is deliberately no default:
     /// asking only works once the user picks an agent.
-    #[serde(default)]
     pub agent: Option<AgentConfig>,
     /// Where queries go when nothing else matches and no bang is used.
-    #[serde(default, deserialize_with = "lenient_engine")]
+    #[serde(deserialize_with = "lenient")]
     pub search_engine: SearchEngine,
+    /// Used when `search_engine` is `Custom`.
+    pub custom_engine: CustomEngine,
+    /// The user's own `!bangs`, which win over bundled ones.
+    pub bangs: Vec<CustomBang>,
+    /// Offer a web search when nothing else matches.
+    pub web_fallback: bool,
+    pub calculator: bool,
+    pub system_commands: bool,
+    /// Searched for apps in addition to the usual places.
+    pub app_folders: Vec<PathBuf>,
+    /// Apps left out of results.
+    pub hidden_apps: Vec<PathBuf>,
     /// The user's own snippets, typed as `;keyword`.
-    #[serde(default)]
     pub snippets: Vec<Snippet>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    /// Follow the system's light or dark mode.
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +53,35 @@ pub struct Snippet {
     /// Typed after `;`, without it.
     pub keyword: String,
     pub text: String,
+}
+
+/// A user-defined bang: `!trigger terms` opens `url` with `%s` replaced by
+/// the terms.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomBang {
+    /// Typed after `!`, without it.
+    pub trigger: String,
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CustomEngine {
+    pub name: String,
+    /// The results page, with `%s` where the query goes.
+    pub url: String,
+}
+
+/// A URL template's problem, if it has one.
+pub fn template_error(url: &str) -> Option<&'static str> {
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        Some("Start the URL with https://.")
+    } else if !url.contains("%s") {
+        Some("Put %s where the search terms go.")
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,9 +94,12 @@ pub enum SearchEngine {
     DuckDuckGo,
     Bing,
     Ecosia,
+    /// The user's `custom_engine`.
+    Custom,
 }
 
 impl SearchEngine {
+    /// The built-in engines.
     pub const ALL: [SearchEngine; 6] = [
         SearchEngine::Startpage,
         SearchEngine::Kagi,
@@ -60,30 +117,75 @@ impl SearchEngine {
             SearchEngine::DuckDuckGo => "DuckDuckGo",
             SearchEngine::Bing => "Bing",
             SearchEngine::Ecosia => "Ecosia",
+            SearchEngine::Custom => "Custom",
         }
     }
 
-    /// The results page for an already URL-encoded query.
-    pub fn search_url(self, encoded_query: &str) -> String {
-        let base = match self {
-            SearchEngine::Startpage => "https://www.startpage.com/do/search?q=",
-            SearchEngine::Kagi => "https://kagi.com/search?q=",
-            SearchEngine::Google => "https://www.google.com/search?q=",
-            SearchEngine::DuckDuckGo => "https://duckduckgo.com/?q=",
-            SearchEngine::Bing => "https://www.bing.com/search?q=",
-            SearchEngine::Ecosia => "https://www.ecosia.org/search?q=",
-        };
-        format!("{base}{encoded_query}")
+    /// The results page, with `%s` where the query goes. `None` for
+    /// `Custom`, which the settings define.
+    pub fn template(self) -> Option<&'static str> {
+        Some(match self {
+            SearchEngine::Startpage => "https://www.startpage.com/do/search?q=%s",
+            SearchEngine::Kagi => "https://kagi.com/search?q=%s",
+            SearchEngine::Google => "https://www.google.com/search?q=%s",
+            SearchEngine::DuckDuckGo => "https://duckduckgo.com/?q=%s",
+            SearchEngine::Bing => "https://www.bing.com/search?q=%s",
+            SearchEngine::Ecosia => "https://www.ecosia.org/search?q=%s",
+            SearchEngine::Custom => return None,
+        })
     }
+}
+
+/// The fallback web search, resolved from the settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebSearch {
+    pub name: String,
+    /// With `%s` where the query goes.
+    pub template: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             hotkey: default_hotkey(),
+            appearance: Appearance::default(),
+            keep_last_query: false,
             agent: None,
             search_engine: SearchEngine::default(),
+            custom_engine: CustomEngine::default(),
+            bangs: Vec::new(),
+            web_fallback: true,
+            calculator: true,
+            system_commands: true,
+            app_folders: Vec::new(),
+            hidden_apps: Vec::new(),
             snippets: Vec::new(),
+        }
+    }
+}
+
+impl Settings {
+    /// The engine queries fall back to. A custom engine that isn't usable
+    /// yet falls back to the default.
+    pub fn web_search(&self) -> WebSearch {
+        if let Some(template) = self.search_engine.template() {
+            return WebSearch {
+                name: self.search_engine.name().into(),
+                template: template.into(),
+            };
+        }
+        let custom = &self.custom_engine;
+        if template_error(&custom.url).is_none() {
+            let name = custom.name.trim();
+            return WebSearch {
+                name: if name.is_empty() { "the web".into() } else { name.into() },
+                template: custom.url.trim().into(),
+            };
+        }
+        let fallback = SearchEngine::default();
+        WebSearch {
+            name: fallback.name().into(),
+            template: fallback.template().unwrap_or_default().into(),
         }
     }
 }
@@ -92,9 +194,13 @@ fn default_hotkey() -> String {
     "alt-space".into()
 }
 
-/// An unknown engine falls back to the default rather than discarding the
+/// An unknown value falls back to the default rather than discarding the
 /// whole settings file.
-fn lenient_engine<'de, D: serde::Deserializer<'de>>(de: D) -> Result<SearchEngine, D::Error> {
+fn lenient<'de, D, T>(de: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + serde::de::DeserializeOwned,
+{
     let value = serde_json::Value::deserialize(de)?;
     Ok(serde_json::from_value(value).unwrap_or_default())
 }
@@ -217,12 +323,20 @@ mod tests {
         agent.model = Some("opus".into());
         let settings = Settings {
             hotkey: "cmd-shift-space".into(),
+            appearance: Appearance::Dark,
             agent: Some(agent),
             search_engine: SearchEngine::Kagi,
+            bangs: vec![CustomBang {
+                trigger: "rs".into(),
+                url: "https://docs.rs/releases/search?query=%s".into(),
+            }],
+            calculator: false,
+            hidden_apps: vec!["/Applications/Chess.app".into()],
             snippets: vec![Snippet {
                 keyword: "sig".into(),
                 text: "Cheers, J".into(),
             }],
+            ..Settings::default()
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);
@@ -245,6 +359,35 @@ mod tests {
         .unwrap();
         assert_eq!(settings.search_engine, SearchEngine::Startpage);
         assert!(settings.agent.is_some());
+    }
+
+    #[test]
+    fn missing_fields_keep_their_defaults() {
+        let settings: Settings = serde_json::from_str(r#"{"hotkey": "f5"}"#).unwrap();
+        assert!(settings.calculator && settings.system_commands && settings.web_fallback);
+        assert_eq!(settings.appearance, Appearance::System);
+    }
+
+    #[test]
+    fn custom_engine_needs_a_usable_url() {
+        let mut settings = Settings {
+            search_engine: SearchEngine::Custom,
+            ..Settings::default()
+        };
+        assert_eq!(settings.web_search().name, "Startpage");
+        settings.custom_engine = CustomEngine {
+            name: "SearXNG".into(),
+            url: "https://searx.example/search?q=%s".into(),
+        };
+        assert_eq!(
+            settings.web_search(),
+            WebSearch {
+                name: "SearXNG".into(),
+                template: "https://searx.example/search?q=%s".into()
+            }
+        );
+        assert!(template_error("searx.example/?q=%s").is_some());
+        assert!(template_error("https://searx.example/").is_some());
     }
 
     #[test]

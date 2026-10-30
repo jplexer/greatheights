@@ -1,6 +1,8 @@
 //! System commands: lock, sleep, restart and friends.
 
-use greatheights_core::{Action, Icon, Item, Matcher, Provider, Run};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use greatheights_core::{Action, Icon, Item, Matcher, Provider, Run, Settings};
 
 struct Command {
     title: &'static str,
@@ -9,11 +11,15 @@ struct Command {
     /// an app ("re" for Reminders) can't put Restart on top, and a second
     /// Enter to run.
     disruptive: bool,
+    /// Greatheights' own commands stay available when system commands are
+    /// turned off, so Settings can always be reached.
+    own: bool,
     run: Run,
 }
 
 pub struct SystemProvider {
     commands: Vec<Command>,
+    enabled: AtomicBool,
 }
 
 impl SystemProvider {
@@ -23,15 +29,20 @@ impl SystemProvider {
             title: "Greatheights Settings",
             keywords: &["settings", "preferences", "config"],
             disruptive: false,
+            own: true,
             run: Run::OpenSettings,
         });
         commands.push(Command {
             title: "Quit Greatheights",
             keywords: &["exit", "close"],
             disruptive: false,
+            own: true,
             run: Run::Quit,
         });
-        Self { commands }
+        Self {
+            commands,
+            enabled: AtomicBool::new(true),
+        }
     }
 }
 
@@ -44,8 +55,10 @@ impl Default for SystemProvider {
 impl Provider for SystemProvider {
     fn search(&self, query: &str, matcher: &mut Matcher) -> Vec<Item> {
         let query = query.to_lowercase();
+        let enabled = self.enabled.load(Ordering::Relaxed);
         self.commands
             .iter()
+            .filter(|command| enabled || command.own)
             .filter(|command| {
                 let min_len = if command.disruptive { 3 } else { 2 };
                 query.chars().count() >= min_len && matches_prefix(command, &query)
@@ -66,6 +79,10 @@ impl Provider for SystemProvider {
                 score: matcher.score(command.title).unwrap_or(0),
             })
             .collect()
+    }
+
+    fn configure(&self, settings: &Settings) {
+        self.enabled.store(settings.system_commands, Ordering::Relaxed);
     }
 }
 
@@ -92,6 +109,7 @@ fn platform_commands() -> Vec<Command> {
             title: "Lock Screen",
             keywords: &["lock"],
             disruptive: false,
+            own: false,
             // Locks when "require password after sleep" is immediate, the default.
             run: spawn("pmset", &["displaysleepnow"]),
         },
@@ -99,36 +117,42 @@ fn platform_commands() -> Vec<Command> {
             title: "Sleep",
             keywords: &["suspend"],
             disruptive: false,
+            own: false,
             run: spawn("pmset", &["sleepnow"]),
         },
         Command {
             title: "Restart",
             keywords: &["reboot"],
             disruptive: true,
+            own: false,
             run: script("tell application \"System Events\" to restart"),
         },
         Command {
             title: "Shut Down",
             keywords: &["shutdown", "power off"],
             disruptive: true,
+            own: false,
             run: script("tell application \"System Events\" to shut down"),
         },
         Command {
             title: "Log Out",
             keywords: &["logout", "sign out"],
             disruptive: true,
+            own: false,
             run: script("tell application \"System Events\" to log out"),
         },
         Command {
             title: "Empty Trash",
             keywords: &["trash", "bin"],
             disruptive: false,
+            own: false,
             run: script("tell application \"Finder\" to empty trash"),
         },
         Command {
             title: "Toggle Dark Mode",
             keywords: &["dark", "light", "appearance", "theme"],
             disruptive: false,
+            own: false,
             run: script(
                 "tell application \"System Events\" to tell appearance preferences \
                  to set dark mode to not dark mode",
@@ -144,30 +168,35 @@ fn platform_commands() -> Vec<Command> {
             title: "Lock Screen",
             keywords: &["lock"],
             disruptive: false,
+            own: false,
             run: spawn("rundll32.exe", &["user32.dll,LockWorkStation"]),
         },
         Command {
             title: "Sleep",
             keywords: &["suspend"],
             disruptive: false,
+            own: false,
             run: spawn("rundll32.exe", &["powrprof.dll,SetSuspendState", "0,1,0"]),
         },
         Command {
             title: "Restart",
             keywords: &["reboot"],
             disruptive: true,
+            own: false,
             run: spawn("shutdown", &["/r", "/t", "0"]),
         },
         Command {
             title: "Shut Down",
             keywords: &["shutdown", "power off"],
             disruptive: true,
+            own: false,
             run: spawn("shutdown", &["/s", "/t", "0"]),
         },
         Command {
             title: "Log Out",
             keywords: &["logout", "sign out"],
             disruptive: true,
+            own: false,
             run: spawn("shutdown", &["/l"]),
         },
     ]
@@ -180,24 +209,28 @@ fn platform_commands() -> Vec<Command> {
             title: "Lock Screen",
             keywords: &["lock"],
             disruptive: false,
+            own: false,
             run: spawn("loginctl", &["lock-session"]),
         },
         Command {
             title: "Sleep",
             keywords: &["suspend"],
             disruptive: false,
+            own: false,
             run: spawn("systemctl", &["suspend"]),
         },
         Command {
             title: "Restart",
             keywords: &["reboot"],
             disruptive: true,
+            own: false,
             run: spawn("systemctl", &["reboot"]),
         },
         Command {
             title: "Shut Down",
             keywords: &["shutdown", "power off"],
             disruptive: true,
+            own: false,
             run: spawn("systemctl", &["poweroff"]),
         },
     ];
@@ -206,6 +239,7 @@ fn platform_commands() -> Vec<Command> {
             title: "Log Out",
             keywords: &["logout", "sign out"],
             disruptive: true,
+            own: false,
             run: spawn("loginctl", &["terminate-session", &session]),
         });
     }

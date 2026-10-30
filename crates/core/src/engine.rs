@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::{Frecency, Item, Matcher, Provider, os};
+use crate::{Frecency, Item, Matcher, Provider, Settings, os};
 
 const MAX_RESULTS: usize = 50;
 
@@ -41,6 +41,12 @@ impl Engine {
         items.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.title.cmp(&b.title)));
         items.truncate(MAX_RESULTS);
         items
+    }
+
+    pub fn configure(&self, settings: &Settings) {
+        for provider in &self.providers {
+            provider.configure(settings);
+        }
     }
 
     pub fn refresh(&self) {

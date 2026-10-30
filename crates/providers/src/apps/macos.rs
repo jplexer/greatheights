@@ -14,7 +14,8 @@ pub const REVEAL_LABEL: &str = "Show in Finder";
 /// Rendered at 2x for the 32pt result rows.
 const ICON_PX: f64 = 64.0;
 
-pub fn scan() -> Vec<AppEntry> {
+/// `extra` folders are searched the same way as the standard ones.
+pub fn scan(extra: &[PathBuf]) -> Vec<AppEntry> {
     let mut roots = vec![
         PathBuf::from("/Applications"),
         PathBuf::from("/System/Applications"),
@@ -23,6 +24,7 @@ pub fn scan() -> Vec<AppEntry> {
     if let Some(home) = dirs::home_dir() {
         roots.push(home.join("Applications"));
     }
+    roots.extend(extra.iter().cloned());
 
     let mut apps = Vec::new();
     for root in &roots {

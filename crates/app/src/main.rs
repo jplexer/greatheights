@@ -20,7 +20,7 @@ use greatheights_providers::{
 use gpui::Application;
 
 use crate::theme::Theme;
-use crate::window::{AskerHandle, Config, EngineHandle, SnippetsHandle, WebHandle};
+use crate::window::{AskerHandle, Config, EngineHandle};
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -31,9 +31,7 @@ fn main() {
         .map(std::path::PathBuf::from)
         .unwrap_or(config_path);
     let settings = Settings::load(&config_path);
-    let web = Arc::new(WebProvider::new(settings.search_engine));
-    let snippets = Arc::new(SnippetProvider::new(settings.snippets.clone()));
-    let engine = Arc::new(build_engine(web.clone(), snippets.clone()));
+    let engine = Arc::new(build_engine(&settings));
 
     // The login item starts us in the background; otherwise show the bar so
     // launching the app visibly does something.
@@ -44,14 +42,13 @@ fn main() {
     app.on_reopen(window::show);
     app.run(move |cx| {
         platform::init();
+        platform::set_appearance(settings.appearance);
         Theme::init(cx);
         input::bind_keys(cx);
         launcher::bind_keys(cx);
         settings::bind_keys(cx);
         cx.set_global(EngineHandle(engine));
         cx.set_global(AskerHandle(Arc::new(Asker::new())));
-        cx.set_global(WebHandle(web));
-        cx.set_global(SnippetsHandle(snippets));
         hotkey::init(&settings.hotkey, cx);
         window::set_config(
             Config {
@@ -70,19 +67,21 @@ fn main() {
     });
 }
 
-fn build_engine(web: Arc<WebProvider>, snippets: Arc<SnippetProvider>) -> Engine {
+fn build_engine(settings: &Settings) -> Engine {
     let cache = app_dir(dirs::cache_dir());
     let data = app_dir(dirs::data_dir());
-    Engine::new(
+    let engine = Engine::new(
         vec![
             Arc::new(AppProvider::new(cache.join("icons"))),
             Arc::new(SystemProvider::new()),
-            snippets,
+            Arc::new(SnippetProvider::new(settings.snippets.clone())),
             Arc::new(CalcProvider::new(cache.join("rates.json"))),
-            web,
+            Arc::new(WebProvider::new(settings)),
         ],
         Frecency::load(data.join("frecency.json")),
-    )
+    );
+    engine.configure(settings);
+    engine
 }
 
 fn app_dir(base: Option<PathBuf>) -> PathBuf {

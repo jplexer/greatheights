@@ -27,7 +27,7 @@ use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
 
-use greatheights_core::{Action, Icon, Item, Matcher, Provider, Run};
+use greatheights_core::{Action, Icon, Item, Matcher, Provider, Run, Settings};
 
 #[derive(Clone, Debug)]
 pub struct AppEntry {
@@ -45,6 +45,9 @@ struct IndexedApp {
 
 pub struct AppProvider {
     apps: RwLock<Vec<IndexedApp>>,
+    /// Searched in addition to the platform's usual places.
+    extra_folders: RwLock<Vec<PathBuf>>,
+    hidden: RwLock<Vec<PathBuf>>,
     icon_dir: PathBuf,
     rendering_icons: Arc<AtomicBool>,
 }
@@ -53,6 +56,8 @@ impl AppProvider {
     pub fn new(icon_dir: PathBuf) -> Self {
         let provider = Self {
             apps: RwLock::new(Vec::new()),
+            extra_folders: RwLock::default(),
+            hidden: RwLock::default(),
             icon_dir,
             rendering_icons: Arc::default(),
         };
@@ -99,7 +104,9 @@ impl AppProvider {
 impl Provider for AppProvider {
     fn search(&self, _query: &str, matcher: &mut Matcher) -> Vec<Item> {
         let apps = self.apps.read().unwrap();
+        let hidden = self.hidden.read().unwrap();
         apps.iter()
+            .filter(|app| !hidden.contains(&app.entry.path))
             .filter_map(|IndexedApp { entry: app, subtitle }| {
                 let score = matcher.score(&app.name)?;
                 let icon = self.icon_path(app);
@@ -131,7 +138,8 @@ impl Provider for AppProvider {
     }
 
     fn refresh(&self) {
-        let mut apps = platform::scan();
+        let extra = self.extra_folders.read().unwrap().clone();
+        let mut apps = platform::scan(&extra);
         apps.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.path.cmp(&b.path)));
         apps.dedup_by(|a, b| a.path == b.path);
         self.render_missing_icons(&apps);
@@ -158,6 +166,11 @@ impl Provider for AppProvider {
             })
             .collect();
         *self.apps.write().unwrap() = indexed;
+    }
+
+    fn configure(&self, settings: &Settings) {
+        *self.extra_folders.write().unwrap() = settings.app_folders.clone();
+        *self.hidden.write().unwrap() = settings.hidden_apps.clone();
     }
 }
 

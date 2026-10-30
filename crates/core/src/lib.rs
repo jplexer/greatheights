@@ -15,7 +15,8 @@ pub use engine::Engine;
 pub use frecency::Frecency;
 pub use matcher::Matcher;
 pub use settings::{
-    AGENT_PRESETS, AgentConfig, AgentPreset, SearchEngine, Settings, Snippet, settings_path,
+    AGENT_PRESETS, AgentConfig, AgentPreset, Appearance, CustomBang, CustomEngine, SearchEngine,
+    Settings, Snippet, WebSearch, settings_path, template_error,
 };
 
 #[derive(Clone, Debug)]
@@ -88,6 +89,10 @@ pub trait Provider: Send + Sync {
 
     /// Rebuilds any cached index. Called off the UI thread.
     fn refresh(&self) {}
+
+    /// Applies changed settings. Index changes take effect on the next
+    /// `refresh`.
+    fn configure(&self, _settings: &Settings) {}
 
     /// Image files this provider's results may show, so the UI can load them
     /// ahead of time instead of popping them in.

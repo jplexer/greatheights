@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use greatheights_core::{Action, Icon, Item, Matcher, Provider, Run};
+use greatheights_core::{Action, Icon, Item, Matcher, Provider, Run, Settings};
 
 use self::rates::Rates;
 
@@ -21,6 +21,7 @@ pub struct CalcProvider {
     rates: Rates,
     /// Set when the last evaluation looked up an exchange rate.
     used_rates: Arc<AtomicBool>,
+    enabled: AtomicBool,
 }
 
 /// An evaluated query.
@@ -48,6 +49,7 @@ impl CalcProvider {
             context: Mutex::new(context),
             rates,
             used_rates,
+            enabled: AtomicBool::new(true),
         }
     }
 
@@ -90,6 +92,9 @@ fn round_money(answer: &str) -> String {
 
 impl Provider for CalcProvider {
     fn search(&self, query: &str, _matcher: &mut Matcher) -> Vec<Item> {
+        if !self.enabled.load(Ordering::Relaxed) {
+            return Vec::new();
+        }
         let Some(answer) = self.evaluate(query) else {
             return Vec::new();
         };
@@ -108,7 +113,13 @@ impl Provider for CalcProvider {
     }
 
     fn refresh(&self) {
-        self.rates.refresh_if_stale();
+        if self.enabled.load(Ordering::Relaxed) {
+            self.rates.refresh_if_stale();
+        }
+    }
+
+    fn configure(&self, settings: &Settings) {
+        self.enabled.store(settings.calculator, Ordering::Relaxed);
     }
 }
 

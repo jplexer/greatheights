@@ -16,6 +16,10 @@ mod fallback {
 
     pub fn init() {}
 
+    /// Windows here are undecorated or follow the desktop's theme; only the
+    /// app's own colors change.
+    pub fn set_appearance(_appearance: greatheights_core::Appearance) {}
+
     /// GPUI can't hide a window here, so there is no native handle: the
     /// launcher closes the window on hide and reopens it on show.
     pub struct NativeWindow;

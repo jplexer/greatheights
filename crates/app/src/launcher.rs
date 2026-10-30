@@ -94,15 +94,35 @@ impl Launcher {
         }
     }
 
-    /// Clears the query and results, ready for the next show.
+    /// Readies the launcher for the next show: an empty bar, or with
+    /// `keep_last_query`, the last query without its answer.
     pub fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.input.update(cx, |input, cx| input.set_text("", cx));
-        self.results.clear();
         self.answer = None;
-        self.selected = 0;
         self.confirming = None;
         self.last_mouse = None;
+        if cx.global::<Config>().settings.keep_last_query {
+            self.update_results(window, cx);
+            return;
+        }
+        self.input.update(cx, |input, cx| input.set_text("", cx));
+        self.results.clear();
+        self.selected = 0;
         platform::set_content_height(window, EMPTY_HEIGHT, cx);
+    }
+
+    /// Called as the launcher appears. A kept query is selected, so typing
+    /// replaces it, and searched again for apps installed since.
+    pub fn on_show(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.input.read(cx).text().is_empty() {
+            return;
+        }
+        if !cx.global::<Config>().settings.keep_last_query {
+            // Kept from before the setting was turned off.
+            self.input.update(cx, |input, cx| input.set_text("", cx));
+            return;
+        }
+        self.input.update(cx, |input, cx| input.select_all_text(cx));
+        self.update_results(window, cx);
     }
 
     #[cfg(debug_assertions)]

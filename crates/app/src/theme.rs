@@ -2,7 +2,11 @@
 
 use std::borrow::Cow;
 
+use greatheights_core::Appearance;
 use gpui::{App, Global, Hsla, Rgba, WindowAppearance, rgb, rgba};
+
+use crate::platform;
+use crate::window::Config;
 
 /// UI text, as in Zed.
 pub const UI_FONT: &str = "IBM Plex Sans";
@@ -80,6 +84,30 @@ impl Theme {
         {
             log::error!("couldn't load bundled fonts: {err}");
         }
-        cx.set_global(Self::for_appearance(cx.window_appearance()));
+        cx.set_global(Self::current(cx));
     }
+
+    /// The theme for the chosen appearance, or the system's.
+    pub fn current(cx: &App) -> Self {
+        let appearance = cx.try_global::<Config>().map(|c| c.settings.appearance);
+        Self::for_appearance(match appearance {
+            Some(Appearance::Light) => WindowAppearance::Light,
+            Some(Appearance::Dark) => WindowAppearance::Dark,
+            Some(Appearance::System) | None => cx.window_appearance(),
+        })
+    }
+}
+
+/// Switches to the chosen appearance and repaints every window.
+pub fn apply(appearance: Appearance, cx: &mut App) {
+    // Changing the native appearance makes AppKit notify each window, which
+    // re-enters GPUI, so it can't happen inside a window update.
+    cx.spawn(async move |cx| {
+        platform::set_appearance(appearance);
+        let _ = cx.update(|cx| {
+            cx.set_global(Theme::current(cx));
+            cx.refresh_windows();
+        });
+    })
+    .detach();
 }

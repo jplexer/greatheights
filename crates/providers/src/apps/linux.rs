@@ -11,12 +11,14 @@ pub const REVEAL_LABEL: &str = "Show in Files";
 
 pub fn render_icon(_app: &Path, _out: &Path) {}
 
-pub fn scan() -> Vec<AppEntry> {
+/// `extra` folders are searched for desktop files after the standard ones.
+pub fn scan(extra: &[PathBuf]) -> Vec<AppEntry> {
     let mut apps = Vec::new();
     // Earlier directories override later ones with the same desktop file id.
     let mut seen = HashSet::new();
-    for dir in data_dirs() {
-        collect(&dir.join("applications"), &dir.join("applications"), &mut seen, &mut apps);
+    let dirs = data_dirs().into_iter().map(|dir| dir.join("applications"));
+    for dir in dirs.chain(extra.iter().cloned()) {
+        collect(&dir, &dir, &mut seen, &mut apps);
     }
     apps
 }

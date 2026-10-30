@@ -3,7 +3,7 @@
 
 use std::sync::RwLock;
 
-use greatheights_core::{Action, Icon, Item, Matcher, Provider, Run, Snippet};
+use greatheights_core::{Action, Icon, Item, Matcher, Provider, Run, Settings, Snippet};
 
 /// Snippet queries start with this, so snippets never crowd other results.
 pub const PREFIX: char = ';';
@@ -67,9 +67,6 @@ impl SnippetProvider {
         }
     }
 
-    pub fn set_snippets(&self, snippets: Vec<Snippet>) {
-        *self.user.write().unwrap() = snippets;
-    }
 }
 
 impl Provider for SnippetProvider {
@@ -118,6 +115,10 @@ impl Provider for SnippetProvider {
             }
         }
         items
+    }
+
+    fn configure(&self, settings: &Settings) {
+        *self.user.write().unwrap() = settings.snippets.clone();
     }
 }
 
