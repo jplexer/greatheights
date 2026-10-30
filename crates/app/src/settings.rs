@@ -12,7 +12,7 @@ use gpui::{
 };
 
 use crate::input::{InputChanged, TextInput};
-use crate::{hotkey, platform};
+use crate::{autostart, hotkey, platform};
 use crate::theme::{self, Theme};
 use crate::window::{self, AskerHandle, Config};
 
@@ -146,6 +146,9 @@ struct SnippetRow {
 
 pub struct SettingsView {
     focus: FocusHandle,
+    /// Read from the login item itself; see `autostart`.
+    launch_at_login: bool,
+    launch_at_login_error: Option<String>,
     snippets: Vec<SnippetRow>,
     hotkey: String,
     /// Waiting for the user to press a new shortcut.
@@ -227,6 +230,8 @@ impl SettingsView {
             .collect();
         let mut view = Self {
             focus,
+            launch_at_login: autostart::is_enabled(),
+            launch_at_login_error: None,
             snippets,
             hotkey: settings.hotkey.clone(),
             recording: false,
@@ -432,6 +437,55 @@ impl SettingsView {
             key_char: None,
         };
         self.stop_recording(Some(pressed.unparse()), cx);
+    }
+
+    fn toggle_launch_at_login(&mut self, cx: &mut Context<Self>) {
+        let enabled = !self.launch_at_login;
+        match autostart::set(enabled) {
+            Ok(()) => {
+                self.launch_at_login = enabled;
+                self.launch_at_login_error = None;
+            }
+            Err(err) => self.launch_at_login_error = Some(err),
+        }
+        cx.notify();
+    }
+
+    fn render_launch_at_login(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.global::<Theme>();
+        let unavailable = autostart::executable().err();
+        let note = self.launch_at_login_error.clone().or(unavailable.clone());
+        div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(label_cell("Startup", theme))
+            .child(
+                div()
+                    .id("launch-at-login")
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(13.))
+                    .child(checkbox(self.launch_at_login, theme))
+                    .child("Launch at login")
+                    .when(unavailable.is_some(), |row| row.text_color(theme.text_muted))
+                    .when(unavailable.is_none(), |row| {
+                        row.on_click(cx.listener(|this, _, _, cx| this.toggle_launch_at_login(cx)))
+                    }),
+            )
+            .children(note.map(|note| {
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(12.))
+                    .text_color(if self.launch_at_login_error.is_some() {
+                        theme.error
+                    } else {
+                        theme.text_muted
+                    })
+                    .child(note)
+            }))
     }
 
     fn render_hotkey(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -758,6 +812,25 @@ fn section(title: &'static str, description: &'static str, theme: &Theme) -> Div
         )
 }
 
+fn checkbox(checked: bool, theme: &Theme) -> Div {
+    div()
+        .size(px(16.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(4.))
+        .border_1()
+        .text_size(px(11.))
+        .map(|box_| {
+            if checked {
+                box_.bg(theme.accent).border_color(theme.accent).text_color(theme.background).child("✓")
+            } else {
+                box_.bg(theme.field).border_color(theme.border)
+            }
+        })
+}
+
 /// A bordered box around a text input, like Zed's input fields.
 fn input_box(input: &Entity<TextInput>, theme: &Theme, cx: &App) -> Div {
     let focus = input.focus_handle(cx);
@@ -846,7 +919,7 @@ impl Render for SettingsView {
         let (text, surface, border) = (theme.text, theme.background, theme.border_variant);
         let general = section(
             "General",
-            "The shortcut that opens the search bar from anywhere.",
+            "How the search bar opens.",
             theme,
         );
         let search = section(
@@ -928,6 +1001,7 @@ impl Render for SettingsView {
                     .gap_4()
                     .child(general)
                     .child(self.render_hotkey(cx))
+                    .child(self.render_launch_at_login(cx))
                     .child(div().h(px(1.)).my_2().bg(border))
                     .child(search)
                     .child(self.render_engines(cx))

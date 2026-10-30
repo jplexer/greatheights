@@ -1,4 +1,5 @@
 mod answer;
+mod autostart;
 mod hotkey;
 mod input;
 mod launcher;
@@ -34,7 +35,14 @@ fn main() {
     let snippets = Arc::new(SnippetProvider::new(settings.snippets.clone()));
     let engine = Arc::new(build_engine(web.clone(), snippets.clone()));
 
-    Application::new().run(move |cx| {
+    // The login item starts us in the background; otherwise show the bar so
+    // launching the app visibly does something.
+    let show_at_start = !std::env::args().any(|arg| arg == autostart::BACKGROUND_ARG);
+
+    let app = Application::new();
+    // Opening the app again (Finder, Spotlight, `open`) shows the bar.
+    app.on_reopen(window::show);
+    app.run(move |cx| {
         platform::init();
         Theme::init(cx);
         input::bind_keys(cx);
@@ -52,7 +60,9 @@ fn main() {
             },
             cx,
         );
-        window::show(cx);
+        if show_at_start {
+            window::show(cx);
+        }
         #[cfg(debug_assertions)]
         window::run_demo(cx);
         #[cfg(debug_assertions)]

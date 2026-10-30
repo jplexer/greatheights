@@ -5,7 +5,7 @@ use greatheights_ai::AskEvent;
 use greatheights_core::{Action, Engine, Icon, Item, Run};
 use gpui::{
     App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable, KeyBinding, MouseMoveEvent,
-    Pixels, Point, ScrollStrategy, SharedString, Stateful, Subscription, UniformListScrollHandle,
+    Pixels, Point, ScrollStrategy, Stateful, Subscription, UniformListScrollHandle,
     Window, actions, div, img, prelude::*, px, uniform_list,
 };
 
@@ -106,7 +106,7 @@ impl Launcher {
     }
 
     #[cfg(debug_assertions)]
-    pub fn set_query(&mut self, query: impl Into<SharedString>, cx: &mut Context<Self>) {
+    pub fn set_query(&mut self, query: impl Into<gpui::SharedString>, cx: &mut Context<Self>) {
         self.input.update(cx, |input, cx| input.set_text(query, cx));
     }
 

@@ -7,6 +7,17 @@ Created in [T3 Code](https://t3.codes).
 A minimal, keyboard-first launcher for macOS, Linux and Windows, built with
 [GPUI](https://gpui.rs).
 
+## Installing (macOS)
+
+```sh
+script/bundle-macos.sh --install
+```
+
+This builds `Greatheights.app` (ad-hoc signed, for this Mac only), copies it
+to `/Applications` and starts it. Turn on **Launch at login** in Settings to
+have it start quietly in the background when you log in. Opening the app
+while it's running shows the search bar.
+
 ## Running
 
 ```sh
