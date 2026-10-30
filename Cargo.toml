@@ -17,6 +17,7 @@ gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 agent-client-protocol = { version = "3.6", features = ["process"] }
 async-channel = "2"
 async-io = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 futures = "0.3"
 dirs = "6"
 global-hotkey = "0.9"
@@ -32,4 +33,5 @@ raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 unicode-segmentation = "1"
+uuid = { version = "1", features = ["v4"] }
 ureq = "3"

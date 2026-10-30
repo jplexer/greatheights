@@ -15,7 +15,7 @@ pub use engine::Engine;
 pub use frecency::Frecency;
 pub use matcher::Matcher;
 pub use settings::{
-    AGENT_PRESETS, AgentConfig, AgentPreset, SearchEngine, Settings, settings_path,
+    AGENT_PRESETS, AgentConfig, AgentPreset, SearchEngine, Settings, Snippet, settings_path,
 };
 
 #[derive(Clone, Debug)]

@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use greatheights_ai::{Ask, AskEvent, Models};
-use greatheights_core::{AGENT_PRESETS, AgentConfig, SearchEngine, Settings};
+use greatheights_core::{AGENT_PRESETS, AgentConfig, SearchEngine, Settings, Snippet};
 use gpui::{
     AnyElement, App, AppContext, KeyDownEvent, Keystroke, Bounds, Context, Div, ElementId, Entity, FocusHandle, Focusable,
     Global, KeyBinding, MouseButton, SharedString, Stateful, Subscription, Task, TitlebarOptions,
@@ -137,8 +137,16 @@ enum ModelsState {
     Failed(String),
 }
 
+/// One editable snippet. Its subscriptions save edits and end with it.
+struct SnippetRow {
+    keyword: Entity<TextInput>,
+    text: Entity<TextInput>,
+    _subscriptions: [Subscription; 2],
+}
+
 pub struct SettingsView {
     focus: FocusHandle,
+    snippets: Vec<SnippetRow>,
     hotkey: String,
     /// Waiting for the user to press a new shortcut.
     recording: bool,
@@ -212,8 +220,14 @@ impl SettingsView {
 
         let focus = cx.focus_handle();
         window.focus(&focus);
+        let snippets = settings
+            .snippets
+            .iter()
+            .map(|snippet| Self::snippet_row(snippet, cx))
+            .collect();
         let mut view = Self {
             focus,
+            snippets,
             hotkey: settings.hotkey.clone(),
             recording: false,
             hotkey_error: None,
@@ -265,6 +279,21 @@ impl SettingsView {
             hotkey: self.hotkey.clone(),
             agent: self.agent(cx),
             search_engine: self.search_engine,
+            snippets: self
+                .snippets
+                .iter()
+                .map(|row| Snippet {
+                    keyword: row
+                        .keyword
+                        .read(cx)
+                        .text()
+                        .trim()
+                        .trim_start_matches(';')
+                        .to_owned(),
+                    text: row.text.read(cx).text().to_owned(),
+                })
+                .filter(|snippet| !snippet.keyword.is_empty())
+                .collect(),
         };
         let path = cx.global::<Config>().path.clone();
         if let Err(err) = settings.save(&path) {
@@ -504,30 +533,86 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        let focus = input.focus_handle(cx);
         div()
             .flex()
             .items_center()
             .gap_3()
             .child(label_cell(label, theme))
+            .child(input_box(input, theme, cx).flex_1())
+    }
+
+    fn snippet_row(snippet: &Snippet, cx: &mut Context<Self>) -> SnippetRow {
+        let input = |placeholder: &str, text: &str, cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                let mut input = TextInput::new(placeholder.to_owned(), cx);
+                input.set_text(text.to_owned(), cx);
+                input
+            })
+        };
+        let keyword = input("keyword", &snippet.keyword, cx);
+        let text = input("Text to copy", &snippet.text, cx);
+        let save = |this: &mut Self, _: Entity<TextInput>, _: &InputChanged, cx: &mut Context<Self>| {
+            this.save(cx)
+        };
+        SnippetRow {
+            _subscriptions: [cx.subscribe(&keyword, save), cx.subscribe(&text, save)],
+            keyword,
+            text,
+        }
+    }
+
+    fn add_snippet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let row = Self::snippet_row(&Snippet::default(), cx);
+        window.focus(&row.keyword.focus_handle(cx));
+        self.snippets.push(row);
+        cx.notify();
+    }
+
+    fn remove_snippet(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.snippets.len() {
+            self.snippets.remove(index);
+            self.save(cx);
+        }
+    }
+
+    fn render_snippets(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.global::<Theme>();
+        let rows = self.snippets.iter().enumerate().map(|(index, row)| {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .w(px(130.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .font_family(theme::MONO_FONT)
+                                .text_color(theme.text_muted)
+                                .child(";"),
+                        )
+                        .child(input_box(&row.keyword, theme, cx).flex_1()),
+                )
+                .child(input_box(&row.text, theme, cx).flex_1())
+                .child(
+                    pill(SharedString::from(format!("remove-{index}")), "Remove", false, theme)
+                        .on_click(cx.listener(move |this, _, _, cx| this.remove_snippet(index, cx))),
+                )
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(rows)
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .h(px(30.))
-                    .px_2()
-                    .flex()
-                    .items_center()
-                    .rounded(px(4.))
-                    .bg(theme.field)
-                    .border_1()
-                    .border_color(theme.border)
-                    .font_family(theme::MONO_FONT)
-                    .text_size(px(13.))
-                    .line_height(px(18.))
-                    .on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
-                    .child(input.clone()),
+                div().flex().child(
+                    pill("add-snippet", "Add snippet", false, theme)
+                        .on_click(cx.listener(|this, _, window, cx| this.add_snippet(window, cx))),
+                ),
             )
     }
 
@@ -673,6 +758,27 @@ fn section(title: &'static str, description: &'static str, theme: &Theme) -> Div
         )
 }
 
+/// A bordered box around a text input, like Zed's input fields.
+fn input_box(input: &Entity<TextInput>, theme: &Theme, cx: &App) -> Div {
+    let focus = input.focus_handle(cx);
+    div()
+        .min_w_0()
+        .overflow_hidden()
+        .h(px(30.))
+        .px_2()
+        .flex()
+        .items_center()
+        .rounded(px(4.))
+        .bg(theme.field)
+        .border_1()
+        .border_color(theme.border)
+        .font_family(theme::MONO_FONT)
+        .text_size(px(13.))
+        .line_height(px(18.))
+        .on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
+        .child(input.clone())
+}
+
 fn label_cell(label: &'static str, theme: &Theme) -> Div {
     div()
         .w(px(84.))
@@ -748,6 +854,12 @@ impl Render for SettingsView {
             "Where a query goes when nothing else matches. Bangs like !g always work.",
             theme,
         );
+        let snippets = section(
+            "Snippets",
+            "Type ; and a keyword in the search bar, then ↵ to copy the text. Built in: \
+             ;date ;time ;now ;uuid ;shrug ;lorem.",
+            theme,
+        );
         let quick_ask = section(
             "Quick Ask",
             "Press Tab in the search bar, or start with ?, to ask an AI agent. The agent \
@@ -819,6 +931,9 @@ impl Render for SettingsView {
                     .child(div().h(px(1.)).my_2().bg(border))
                     .child(search)
                     .child(self.render_engines(cx))
+                    .child(div().h(px(1.)).my_2().bg(border))
+                    .child(snippets)
+                    .child(self.render_snippets(cx))
                     .child(div().h(px(1.)).my_2().bg(border))
                     .child(quick_ask)
                     .child(div().flex().flex_col().gap_1().children(options))

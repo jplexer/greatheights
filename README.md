@@ -26,6 +26,9 @@ Besides apps, the bar understands:
 - **Bangs**: `!gh gpui` or `gpui !gh`, using [Kagi's bang list](https://github.com/kagisearch/bangs)
   (MIT, bundled). Anything else can be searched with your chosen engine:
   Startpage (default), Kagi, Google, DuckDuckGo, Bing or Ecosia.
+- **Snippets**: type `;` and a keyword, then ↵ copies the text. Built in:
+  `;date`, `;time`, `;now`, `;uuid`, `;shrug`, `;lorem`; add your own in
+  Settings.
 - **System commands**: lock, sleep, restart, shut down, log out, empty
   trash, toggle dark mode. Restart, shut down and log out ask for a second ↵.
 
@@ -52,7 +55,7 @@ instead (toggle command coming soon).
 ## Layout
 
 - `crates/core`: result model, provider trait, fuzzy ranking, frecency
-- `crates/providers`: result sources (apps, calculator, web/bangs, system commands)
+- `crates/providers`: result sources (apps, calculator, web/bangs, snippets, system commands)
 - `crates/ai`: Quick Ask over ACP, with a scripted mock agent for tests
 - `crates/app`: the GPUI window, text input and hotkey
 

@@ -18,6 +18,16 @@ pub struct Settings {
     /// Where queries go when nothing else matches and no bang is used.
     #[serde(default, deserialize_with = "lenient_engine")]
     pub search_engine: SearchEngine,
+    /// The user's own snippets, typed as `;keyword`.
+    #[serde(default)]
+    pub snippets: Vec<Snippet>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Snippet {
+    /// Typed after `;`, without it.
+    pub keyword: String,
+    pub text: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +83,7 @@ impl Default for Settings {
             hotkey: default_hotkey(),
             agent: None,
             search_engine: SearchEngine::default(),
+            snippets: Vec::new(),
         }
     }
 }
@@ -208,6 +219,10 @@ mod tests {
             hotkey: "cmd-shift-space".into(),
             agent: Some(agent),
             search_engine: SearchEngine::Kagi,
+            snippets: vec![Snippet {
+                keyword: "sig".into(),
+                text: "Cheers, J".into(),
+            }],
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);

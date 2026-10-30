@@ -13,11 +13,13 @@ use std::sync::Arc;
 
 use greatheights_ai::Asker;
 use greatheights_core::{Engine, Frecency, Settings, settings_path};
-use greatheights_providers::{AppProvider, CalcProvider, SystemProvider, WebProvider};
+use greatheights_providers::{
+    AppProvider, CalcProvider, SnippetProvider, SystemProvider, WebProvider,
+};
 use gpui::Application;
 
 use crate::theme::Theme;
-use crate::window::{AskerHandle, Config, EngineHandle, WebHandle};
+use crate::window::{AskerHandle, Config, EngineHandle, SnippetsHandle, WebHandle};
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -29,7 +31,8 @@ fn main() {
         .unwrap_or(config_path);
     let settings = Settings::load(&config_path);
     let web = Arc::new(WebProvider::new(settings.search_engine));
-    let engine = Arc::new(build_engine(web.clone()));
+    let snippets = Arc::new(SnippetProvider::new(settings.snippets.clone()));
+    let engine = Arc::new(build_engine(web.clone(), snippets.clone()));
 
     Application::new().run(move |cx| {
         platform::init();
@@ -40,6 +43,7 @@ fn main() {
         cx.set_global(EngineHandle(engine));
         cx.set_global(AskerHandle(Arc::new(Asker::new())));
         cx.set_global(WebHandle(web));
+        cx.set_global(SnippetsHandle(snippets));
         hotkey::init(&settings.hotkey, cx);
         window::set_config(
             Config {
@@ -56,13 +60,14 @@ fn main() {
     });
 }
 
-fn build_engine(web: Arc<WebProvider>) -> Engine {
+fn build_engine(web: Arc<WebProvider>, snippets: Arc<SnippetProvider>) -> Engine {
     let cache = app_dir(dirs::cache_dir());
     let data = app_dir(dirs::data_dir());
     Engine::new(
         vec![
             Arc::new(AppProvider::new(cache.join("icons"))),
             Arc::new(SystemProvider::new()),
+            snippets,
             Arc::new(CalcProvider::new(cache.join("rates.json"))),
             web,
         ],

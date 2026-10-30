@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use greatheights_ai::Asker;
 use greatheights_core::{Engine, Settings};
-use greatheights_providers::WebProvider;
+use greatheights_providers::{SnippetProvider, WebProvider};
 use gpui::{
     App, AppContext, Bounds, Focusable, Global, ImgResourceLoader, Resource, WindowBounds,
     WindowHandle, WindowKind, WindowOptions, point, px, size,
@@ -42,10 +42,17 @@ pub struct WebHandle(pub Arc<WebProvider>);
 
 impl Global for WebHandle {}
 
+pub struct SnippetsHandle(pub Arc<SnippetProvider>);
+
+impl Global for SnippetsHandle {}
+
 /// Installs new settings and passes them to the parts that cache them.
 pub fn set_config(config: Config, cx: &mut App) {
     if let Some(web) = cx.try_global::<WebHandle>() {
         web.0.set_engine(config.settings.search_engine);
+    }
+    if let Some(snippets) = cx.try_global::<SnippetsHandle>() {
+        snippets.0.set_snippets(config.settings.snippets.clone());
     }
     cx.set_global(config);
 }

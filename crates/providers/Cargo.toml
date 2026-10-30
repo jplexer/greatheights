@@ -5,12 +5,14 @@ edition.workspace = true
 
 [dependencies]
 greatheights-core.workspace = true
+chrono.workspace = true
 dirs.workspace = true
 fend-core.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ureq.workspace = true
+uuid.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true

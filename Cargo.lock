@@ -2714,6 +2714,7 @@ dependencies = [
 name = "greatheights-providers"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dirs 6.0.0",
  "fend-core",
  "greatheights-core",
@@ -2724,6 +2725,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ureq",
+ "uuid",
 ]
 
 [[package]]
