@@ -93,13 +93,12 @@ fn main() {
     }
 }
 
-const LONG_ANSWER: &str = "A monad is a way of chaining computations that carry some extra context, \
-such as possible failure, multiple results or side effects. It pairs a type constructor with two \
-operations: one that wraps a plain value, and one (bind) that feeds a wrapped value into a function \
-returning another wrapped value.\n\nIn Rust terms, Option and Result behave monadically: and_then is \
-bind, and Some or Ok wraps a value. The ? operator is sugar for the same idea, short-circuiting on \
-None or Err.\n\nThe laws (left identity, right identity, associativity) just guarantee that \
-chaining behaves the way you'd expect regardless of how you group the steps.";
+const LONG_ANSWER: &str = "## Monads\n\nA **monad** chains computations that carry extra \
+context, such as possible failure or side effects. It pairs a type with two operations:\n\n\
+- `pure` wraps a plain value\n- `bind` feeds a wrapped value into a function returning another \
+wrapped value\n\nIn Rust, `Option` and `Result` behave monadically: `and_then` is *bind*.\n\n\
+```rust\nlet port = env::var(\"PORT\").ok().and_then(|p| p.parse().ok());\n```\n\n\
+The laws just guarantee chaining behaves the same however you group the steps.";
 
 fn model_option(current: &str) -> Value {
     json!({

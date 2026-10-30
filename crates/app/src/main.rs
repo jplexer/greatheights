@@ -2,6 +2,7 @@ mod answer;
 mod hotkey;
 mod input;
 mod launcher;
+mod markdown;
 mod platform;
 mod settings;
 mod theme;
@@ -39,6 +40,7 @@ fn main() {
         cx.set_global(EngineHandle(engine));
         cx.set_global(AskerHandle(Arc::new(Asker::new())));
         cx.set_global(WebHandle(web));
+        hotkey::init(&settings.hotkey, cx);
         window::set_config(
             Config {
                 settings,
@@ -46,7 +48,6 @@ fn main() {
             },
             cx,
         );
-        hotkey::register(cx);
         window::show(cx);
         #[cfg(debug_assertions)]
         window::run_demo(cx);

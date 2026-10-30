@@ -294,7 +294,7 @@ fn decline(request: &RequestPermissionRequest) -> RequestPermissionResponse {
 fn frame(question: &str) -> String {
     format!(
         "You're answering a quick question typed into a desktop launcher. \
-         Answer directly and concisely in plain text, without Markdown. \
+         Answer directly and concisely; Markdown is fine. \
          Don't use tools, read or write files, or run commands.\n\n{question}"
     )
 }

@@ -1,11 +1,12 @@
-//! Single-line text input, adapted from GPUI's `input` example.
+//! Single-line text input, adapted from GPUI's `input` example, with
+//! word-wise editing, undo and horizontal scrolling added.
 
 use std::ops::Range;
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
+    ContentMask, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
     ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div,
     fill, point, prelude::*, px, relative, size,
 };
@@ -30,6 +31,39 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("home", Home, Some(CONTEXT)),
         KeyBinding::new("end", End, Some(CONTEXT)),
         KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, Some(CONTEXT)),
+        KeyBinding::new("shift-home", SelectToStart, Some(CONTEXT)),
+        KeyBinding::new("shift-end", SelectToEnd, Some(CONTEXT)),
+    ]);
+    // Word and line movement follow each platform's text field conventions.
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        KeyBinding::new("alt-left", WordLeft, Some(CONTEXT)),
+        KeyBinding::new("alt-right", WordRight, Some(CONTEXT)),
+        KeyBinding::new("alt-shift-left", SelectWordLeft, Some(CONTEXT)),
+        KeyBinding::new("alt-shift-right", SelectWordRight, Some(CONTEXT)),
+        KeyBinding::new("cmd-left", Home, Some(CONTEXT)),
+        KeyBinding::new("cmd-right", End, Some(CONTEXT)),
+        KeyBinding::new("ctrl-a", Home, Some(CONTEXT)),
+        KeyBinding::new("ctrl-e", End, Some(CONTEXT)),
+        KeyBinding::new("cmd-shift-left", SelectToStart, Some(CONTEXT)),
+        KeyBinding::new("cmd-shift-right", SelectToEnd, Some(CONTEXT)),
+        KeyBinding::new("alt-backspace", DeleteWordLeft, Some(CONTEXT)),
+        KeyBinding::new("alt-delete", DeleteWordRight, Some(CONTEXT)),
+        KeyBinding::new("cmd-backspace", DeleteToStart, Some(CONTEXT)),
+        KeyBinding::new("cmd-z", Undo, Some(CONTEXT)),
+        KeyBinding::new("cmd-shift-z", Redo, Some(CONTEXT)),
+    ]);
+    #[cfg(not(target_os = "macos"))]
+    cx.bind_keys([
+        KeyBinding::new("ctrl-left", WordLeft, Some(CONTEXT)),
+        KeyBinding::new("ctrl-right", WordRight, Some(CONTEXT)),
+        KeyBinding::new("ctrl-shift-left", SelectWordLeft, Some(CONTEXT)),
+        KeyBinding::new("ctrl-shift-right", SelectWordRight, Some(CONTEXT)),
+        KeyBinding::new("ctrl-backspace", DeleteWordLeft, Some(CONTEXT)),
+        KeyBinding::new("ctrl-delete", DeleteWordRight, Some(CONTEXT)),
+        KeyBinding::new("ctrl-z", Undo, Some(CONTEXT)),
+        KeyBinding::new("ctrl-shift-z", Redo, Some(CONTEXT)),
+        KeyBinding::new("ctrl-y", Redo, Some(CONTEXT)),
     ]);
 }
 
@@ -49,8 +83,25 @@ actions!(
         Paste,
         Cut,
         Copy,
+        WordLeft,
+        WordRight,
+        SelectWordLeft,
+        SelectWordRight,
+        SelectToStart,
+        SelectToEnd,
+        DeleteWordLeft,
+        DeleteWordRight,
+        DeleteToStart,
+        Undo,
+        Redo,
     ]
 );
+
+/// A state to return to with undo or redo.
+struct Snapshot {
+    content: SharedString,
+    selected_range: Range<usize>,
+}
 
 pub struct TextInput {
     focus_handle: FocusHandle,
@@ -62,6 +113,13 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    /// How far the text is scrolled left to keep the cursor visible.
+    scroll_x: Pixels,
+    undo_stack: Vec<Snapshot>,
+    redo_stack: Vec<Snapshot>,
+    /// Where the last typed text ended, so continued typing joins the same
+    /// undo step.
+    typing_at: Option<usize>,
 }
 
 /// Emitted whenever the text changes.
@@ -81,6 +139,10 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            scroll_x: px(0.),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            typing_at: None,
         }
     }
 
@@ -88,11 +150,15 @@ impl TextInput {
         &self.content
     }
 
+    /// Replaces the text, starting a fresh undo history.
     pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.content = text.into();
         self.selected_range = self.content.len()..self.content.len();
         self.selection_reversed = false;
         self.marked_range = None;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.typing_at = None;
         cx.emit(InputChanged);
         cx.notify();
     }
@@ -146,6 +212,105 @@ impl TextInput {
             self.select_to(self.next_boundary(self.cursor_offset()), cx)
         }
         self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(self.word_start_before(self.cursor_offset()), cx);
+    }
+
+    fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(self.word_end_after(self.cursor_offset()), cx);
+    }
+
+    fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.word_start_before(self.cursor_offset()), cx);
+    }
+
+    fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.word_end_after(self.cursor_offset()), cx);
+    }
+
+    fn select_to_start(&mut self, _: &SelectToStart, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(0, cx);
+    }
+
+    fn select_to_end(&mut self, _: &SelectToEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.content.len(), cx);
+    }
+
+    fn delete_word_left(&mut self, _: &DeleteWordLeft, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            self.select_to(self.word_start_before(self.cursor_offset()), cx);
+        }
+        self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_word_right(&mut self, _: &DeleteWordRight, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            self.select_to(self.word_end_after(self.cursor_offset()), cx);
+        }
+        self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_to_start(&mut self, _: &DeleteToStart, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            self.select_to(0, cx);
+        }
+        self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(snapshot) = self.undo_stack.pop() {
+            let current = self.snapshot();
+            self.redo_stack.push(current);
+            self.restore(snapshot, cx);
+        }
+    }
+
+    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(snapshot) = self.redo_stack.pop() {
+            let current = self.snapshot();
+            self.undo_stack.push(current);
+            self.restore(snapshot, cx);
+        }
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            content: self.content.clone(),
+            selected_range: self.selected_range.clone(),
+        }
+    }
+
+    fn restore(&mut self, snapshot: Snapshot, cx: &mut Context<Self>) {
+        self.content = snapshot.content;
+        self.selected_range = snapshot.selected_range;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.typing_at = None;
+        cx.emit(InputChanged);
+        cx.notify();
+    }
+
+    /// Records the state before replacing `range` with `new_text`. Typing
+    /// that continues where the last typing stopped joins its undo step.
+    fn record_edit(&mut self, range: &Range<usize>, new_text: &str) {
+        let typing = range.is_empty() && !new_text.is_empty() && !new_text.contains(char::is_whitespace);
+        let continues = typing && self.typing_at == Some(range.start);
+        if !continues {
+            let snapshot = self.snapshot();
+            self.undo_stack.push(snapshot);
+            self.redo_stack.clear();
+        }
+        self.typing_at = typing.then(|| range.start + new_text.len());
+    }
+
+    fn word_start_before(&self, offset: usize) -> usize {
+        word_start_before(&self.content, offset)
+    }
+
+    fn word_end_after(&self, offset: usize) -> usize {
+        word_end_after(&self.content, offset)
     }
 
     fn on_mouse_down(
@@ -232,7 +397,7 @@ impl TextInput {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        line.closest_index_for_x(position.x - bounds.left())
+        line.closest_index_for_x(position.x - bounds.left() + self.scroll_x)
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -354,6 +519,9 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
+        if self.marked_range.is_none() {
+            self.record_edit(&range, new_text);
+        }
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
@@ -377,6 +545,10 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
+        // A composition (IME) is one undo step, recorded when it starts.
+        if self.marked_range.is_none() {
+            self.record_edit(&range, "");
+        }
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
@@ -404,15 +576,10 @@ impl EntityInputHandler for TextInput {
     ) -> Option<Bounds<Pixels>> {
         let last_layout = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
+        let left = bounds.left() - self.scroll_x;
         Some(Bounds::from_corners(
-            point(
-                bounds.left() + last_layout.x_for_index(range.start),
-                bounds.top(),
-            ),
-            point(
-                bounds.left() + last_layout.x_for_index(range.end),
-                bounds.bottom(),
-            ),
+            point(left + last_layout.x_for_index(range.start), bounds.top()),
+            point(left + last_layout.x_for_index(range.end), bounds.bottom()),
         ))
     }
 
@@ -426,7 +593,7 @@ impl EntityInputHandler for TextInput {
         let last_layout = self.last_layout.as_ref()?;
 
         assert_eq!(last_layout.text, self.content);
-        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
+        let utf8_index = last_layout.index_for_x(point.x - line_point.x + self.scroll_x)?;
         Some(self.offset_to_utf16(utf8_index))
     }
 }
@@ -437,6 +604,7 @@ struct TextElement {
 
 struct PrepaintState {
     line: Option<ShapedLine>,
+    scroll_x: Pixels,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
 }
@@ -537,13 +705,28 @@ impl Element for TextElement {
             .shape_line(display_text, font_size, &runs, None);
 
         let cursor_pos = line.x_for_index(cursor);
+        // Scroll just enough to keep the cursor in view.
+        let width = bounds.size.width;
+        let cursor_width = px(2.);
+        let mut scroll_x = input.scroll_x;
+        if cursor_pos - scroll_x > width - cursor_width {
+            scroll_x = cursor_pos - width + cursor_width;
+        }
+        if cursor_pos < scroll_x {
+            scroll_x = cursor_pos;
+        }
+        scroll_x = scroll_x
+            .min((line.width - width + cursor_width).max(px(0.)))
+            .max(px(0.));
+        let left = bounds.left() - scroll_x;
+
         let (selection, cursor) = if selected_range.is_empty() {
             (
                 None,
                 Some(fill(
                     Bounds::new(
-                        point(bounds.left() + cursor_pos, bounds.top()),
-                        size(px(2.), bounds.bottom() - bounds.top()),
+                        point(left + cursor_pos, bounds.top()),
+                        size(cursor_width, bounds.bottom() - bounds.top()),
                     ),
                     theme.accent,
                 )),
@@ -552,14 +735,8 @@ impl Element for TextElement {
             (
                 Some(fill(
                     Bounds::from_corners(
-                        point(
-                            bounds.left() + line.x_for_index(selected_range.start),
-                            bounds.top(),
-                        ),
-                        point(
-                            bounds.left() + line.x_for_index(selected_range.end),
-                            bounds.bottom(),
-                        ),
+                        point(left + line.x_for_index(selected_range.start), bounds.top()),
+                        point(left + line.x_for_index(selected_range.end), bounds.bottom()),
                     ),
                     theme.selection,
                 )),
@@ -568,6 +745,7 @@ impl Element for TextElement {
         };
         PrepaintState {
             line: Some(line),
+            scroll_x,
             cursor,
             selection,
         }
@@ -589,22 +767,25 @@ impl Element for TextElement {
             ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
-        if let Some(selection) = prepaint.selection.take() {
-            window.paint_quad(selection)
-        }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
-            .unwrap();
-
-        if focus_handle.is_focused(window)
-            && let Some(cursor) = prepaint.cursor.take()
-        {
-            window.paint_quad(cursor);
-        }
+        let scroll_x = prepaint.scroll_x;
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            if let Some(selection) = prepaint.selection.take() {
+                window.paint_quad(selection)
+            }
+            let origin = point(bounds.left() - scroll_x, bounds.top());
+            line.paint(origin, window.line_height(), window, cx).unwrap();
+            if focus_handle.is_focused(window)
+                && let Some(cursor) = prepaint.cursor.take()
+            {
+                window.paint_quad(cursor);
+            }
+        });
 
         self.input.update(cx, |input, _cx| {
             input.last_layout = Some(line);
             input.last_bounds = Some(bounds);
+            input.scroll_x = scroll_x;
         });
     }
 }
@@ -629,6 +810,17 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::word_left))
+            .on_action(cx.listener(Self::word_right))
+            .on_action(cx.listener(Self::select_word_left))
+            .on_action(cx.listener(Self::select_word_right))
+            .on_action(cx.listener(Self::select_to_start))
+            .on_action(cx.listener(Self::select_to_end))
+            .on_action(cx.listener(Self::delete_word_left))
+            .on_action(cx.listener(Self::delete_word_right))
+            .on_action(cx.listener(Self::delete_to_start))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -641,5 +833,66 @@ impl Render for TextInput {
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// The start of the word before `offset`, skipping spaces and punctuation
+/// first, like text fields do.
+fn word_start_before(text: &str, offset: usize) -> usize {
+    let mut chars = text[..offset].char_indices().rev().peekable();
+    let mut position = offset;
+    for in_word in [false, true] {
+        while let Some(&(index, c)) = chars.peek() {
+            if is_word_char(c) != in_word {
+                break;
+            }
+            position = index;
+            chars.next();
+        }
+    }
+    position
+}
+
+/// The end of the word after `offset`.
+fn word_end_after(text: &str, offset: usize) -> usize {
+    let mut chars = text[offset..].char_indices().peekable();
+    let mut position = offset;
+    for in_word in [false, true] {
+        while let Some(&(index, c)) = chars.peek() {
+            if is_word_char(c) != in_word {
+                break;
+            }
+            position = offset + index + c.len_utf8();
+            chars.next();
+        }
+    }
+    position
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn moves_by_words() {
+        let text = "what is a monad?";
+        assert_eq!(word_start_before(text, text.len()), 10);
+        assert_eq!(word_start_before(text, 10), 8);
+        assert_eq!(word_start_before(text, 2), 0);
+        assert_eq!(word_end_after(text, 0), 4);
+        assert_eq!(word_end_after(text, 4), 7);
+        assert_eq!(word_end_after(text, 10), 15);
+        assert_eq!(word_end_after(text, 15), 16);
+    }
+
+    #[test]
+    fn handles_multibyte_text() {
+        let text = "café über";
+        assert_eq!(word_start_before(text, text.len()), "café ".len());
+        assert_eq!(word_end_after(text, 0), "café".len());
     }
 }

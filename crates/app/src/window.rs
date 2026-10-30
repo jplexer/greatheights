@@ -134,6 +134,8 @@ pub fn show(cx: &mut App) {
             if fresh {
                 native.configure_as_panel();
             }
+            // Open where the user is working, like Raycast.
+            native.move_to_pointer_screen(TOP_OFFSET as f64);
             native.show();
         }
         let shown = handle.update(cx, |launcher, window, cx| {

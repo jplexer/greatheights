@@ -215,6 +215,7 @@ impl Launcher {
         self.answer = Some(Answer {
             agent: agent.display_name(),
             text: String::new(),
+            blocks: Vec::new(),
             status: Status::Waiting,
             ask: Some(ask),
             _task: task,
@@ -229,7 +230,7 @@ impl Launcher {
         };
         match event {
             AskEvent::Text(text) => {
-                answer.text.push_str(&text);
+                answer.push_text(&text);
                 answer.status = Status::Streaming;
             }
             AskEvent::Done => {

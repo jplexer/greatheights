@@ -25,6 +25,7 @@ env_logger = "0.11"
 fend-core = "1.5"
 nucleo-matcher = "0.3"
 objc2 = "0.6"
+pulldown-cmark = { version = "0.13", default-features = false }
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
 raw-window-handle = "0.6"

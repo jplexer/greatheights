@@ -4,6 +4,7 @@ use greatheights_ai::Ask;
 use gpui::{IntoElement, ParentElement, Styled, Task, div, prelude::*, px};
 
 use crate::launcher::kbd;
+use crate::markdown::{self, Block};
 use crate::theme::Theme;
 
 const PADDING: f32 = 12.;
@@ -11,10 +12,7 @@ const LINE_HEIGHT: f32 = 20.;
 const FOOTER_HEIGHT: f32 = 18.;
 const GAP: f32 = 10.;
 /// Taller answers scroll.
-const MAX_TEXT_HEIGHT: f32 = 360.;
-/// Roughly how many characters of 14px text fit on a line of the answer
-/// panel; used to size the window before layout.
-const CHARS_PER_LINE: usize = 80;
+const MAX_TEXT_HEIGHT: f32 = 400.;
 
 pub enum Status {
     Waiting,
@@ -25,7 +23,10 @@ pub enum Status {
 
 pub struct Answer {
     pub agent: String,
+    /// The raw Markdown, which is what Enter copies.
     pub text: String,
+    /// `text`, parsed for display.
+    pub blocks: Vec<Block>,
     pub status: Status,
     /// Dropping the ask cancels it, so keep it until the answer finishes.
     pub ask: Option<Ask>,
@@ -38,14 +39,14 @@ impl Answer {
         1. + PADDING * 2. + self.text_height() + GAP + FOOTER_HEIGHT
     }
 
+    pub fn push_text(&mut self, text: &str) {
+        self.text.push_str(text);
+        self.blocks = markdown::parse(&self.text);
+    }
+
     fn text_height(&self) -> f32 {
-        let lines: usize = self
-            .text
-            .trim_end()
-            .lines()
-            .map(|line| line.chars().count().div_ceil(CHARS_PER_LINE).max(1))
-            .sum();
-        (lines.max(1) as f32 * LINE_HEIGHT).min(MAX_TEXT_HEIGHT)
+        markdown::estimate_height(&self.blocks)
+            .clamp(LINE_HEIGHT, MAX_TEXT_HEIGHT)
     }
 
     pub fn render(&self, theme: &Theme) -> impl IntoElement {
@@ -59,7 +60,7 @@ impl Answer {
             (None, true) => div()
                 .text_color(theme.text_muted)
                 .child(format!("Asking {}…", self.agent)),
-            (_, false) => div().child(self.text.trim_end().to_owned()),
+            (_, false) => markdown::render(&self.blocks, theme),
         };
         // A failure partway through keeps the partial answer and notes the
         // error below it.

@@ -13,7 +13,8 @@ A minimal, keyboard-first launcher for macOS, Linux and Windows, built with
 cargo run -p greatheights
 ```
 
-Press <kbd>⌥ Space</kbd> to toggle the launcher. <kbd>↵</kbd> opens the
+Press <kbd>⌥ Space</kbd> (changeable in Settings) to toggle the launcher; it
+opens on the screen with the mouse pointer. <kbd>↵</kbd> opens the
 selected result, <kbd>⌘ ↵</kbd> runs its secondary action (show in Finder),
 <kbd>Esc</kbd> closes it and <kbd>⌘ Q</kbd> quits.
 
@@ -31,8 +32,8 @@ Besides apps, the bar understands:
 ## Quick Ask
 
 Press <kbd>Tab</kbd> to ask an AI agent about whatever you typed, or start
-the query with `?`. Answers stream in below the bar; <kbd>↵</kbd> copies
-them.
+the query with `?`. Answers stream in below the bar with Markdown formatting;
+<kbd>↵</kbd> copies the Markdown.
 
 Any [Agent Client Protocol](https://agentclientprotocol.com) agent works, so
 you can use the Claude, Codex or Gemini subscription you already have. There

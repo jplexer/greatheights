@@ -5,14 +5,14 @@ use std::time::Duration;
 use greatheights_ai::{Ask, AskEvent, Models};
 use greatheights_core::{AGENT_PRESETS, AgentConfig, SearchEngine, Settings};
 use gpui::{
-    AnyElement, App, AppContext, Bounds, Context, Div, ElementId, Entity, FocusHandle, Focusable,
+    AnyElement, App, AppContext, KeyDownEvent, Keystroke, Bounds, Context, Div, ElementId, Entity, FocusHandle, Focusable,
     Global, KeyBinding, MouseButton, SharedString, Stateful, Subscription, Task, TitlebarOptions,
     Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, actions, div, prelude::*, px,
     size,
 };
 
 use crate::input::{InputChanged, TextInput};
-use crate::platform;
+use crate::{hotkey, platform};
 use crate::theme::{self, Theme};
 use crate::window::{self, AskerHandle, Config};
 
@@ -46,7 +46,7 @@ pub fn open(cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(540.), px(720.)),
+            size(px(540.), px(800.)),
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
@@ -139,6 +139,10 @@ enum ModelsState {
 
 pub struct SettingsView {
     focus: FocusHandle,
+    hotkey: String,
+    /// Waiting for the user to press a new shortcut.
+    recording: bool,
+    hotkey_error: Option<String>,
     search_engine: SearchEngine,
     choice: Choice,
     /// The chosen model id; `None` is the agent's default.
@@ -210,6 +214,9 @@ impl SettingsView {
         window.focus(&focus);
         let mut view = Self {
             focus,
+            hotkey: settings.hotkey.clone(),
+            recording: false,
+            hotkey_error: None,
             search_engine: settings.search_engine,
             choice,
             model: agent.and_then(|a| a.model),
@@ -255,6 +262,7 @@ impl SettingsView {
 
     fn save(&mut self, cx: &mut Context<Self>) {
         let settings = Settings {
+            hotkey: self.hotkey.clone(),
             agent: self.agent(cx),
             search_engine: self.search_engine,
         };
@@ -347,12 +355,94 @@ impl SettingsView {
         cx.notify();
     }
 
-    fn close(&mut self, _: &Close, window: &mut Window, _: &mut Context<Self>) {
+    fn close(&mut self, _: &Close, window: &mut Window, cx: &mut Context<Self>) {
+        if self.recording {
+            self.stop_recording(None, cx);
+            return;
+        }
         window.remove_window();
     }
 
+    fn start_recording(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.recording = true;
+        self.hotkey_error = None;
+        // Keys must reach this view, not a text field.
+        window.focus(&self.focus);
+        hotkey::pause(cx);
+        cx.notify();
+    }
+
+    /// Ends recording, switching to `keystroke` if given and usable.
+    fn stop_recording(&mut self, keystroke: Option<String>, cx: &mut Context<Self>) {
+        self.recording = false;
+        if let Some(keystroke) = keystroke {
+            match hotkey::set(&keystroke, cx) {
+                Ok(()) => {
+                    self.hotkey = keystroke;
+                    self.save(cx);
+                    return;
+                }
+                Err(err) => self.hotkey_error = Some(err),
+            }
+        }
+        // Keep the previous shortcut working.
+        if let Err(err) = hotkey::set(&self.hotkey, cx) {
+            self.hotkey_error = Some(err);
+        }
+        cx.notify();
+    }
+
+    fn record_key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.recording {
+            return;
+        }
+        cx.stop_propagation();
+        let pressed = Keystroke {
+            modifiers: event.keystroke.modifiers,
+            key: event.keystroke.key.clone(),
+            key_char: None,
+        };
+        self.stop_recording(Some(pressed.unparse()), cx);
+    }
+
+    fn render_hotkey(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.global::<Theme>();
+        let label = if self.recording {
+            "Press a shortcut…".to_owned()
+        } else {
+            hotkey::label(&self.hotkey)
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(label_cell("Shortcut", theme))
+            .child(
+                pill("hotkey", label, self.recording, theme)
+                    .font_family(theme::MONO_FONT)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if !this.recording {
+                            this.start_recording(window, cx);
+                        }
+                    })),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(12.))
+                    .map(|note| match (&self.hotkey_error, self.recording) {
+                        (Some(err), _) => note.text_color(theme.error).child(err.clone()),
+                        (None, true) => note
+                            .text_color(theme.text_muted)
+                            .child("Esc to cancel"),
+                        (None, false) => note,
+                    }),
+            )
+    }
+
     fn next_field(&mut self, _: &NextField, window: &mut Window, cx: &mut Context<Self>) {
-        if self.choice != Choice::Custom {
+        if self.recording || self.choice != Choice::Custom {
             return;
         }
         let fields = [&self.name, &self.command, &self.args];
@@ -648,6 +738,11 @@ impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let (text, surface, border) = (theme.text, theme.background, theme.border_variant);
+        let general = section(
+            "General",
+            "The shortcut that opens the search bar from anywhere.",
+            theme,
+        );
         let search = section(
             "Search",
             "Where a query goes when nothing else matches. Bangs like !g always work.",
@@ -706,6 +801,7 @@ impl Render for SettingsView {
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::close))
             .on_action(cx.listener(Self::next_field))
+            .on_key_down(cx.listener(Self::record_key))
             .id("settings")
             .size_full()
             .overflow_y_scroll()
@@ -718,6 +814,9 @@ impl Render for SettingsView {
                     .flex()
                     .flex_col()
                     .gap_4()
+                    .child(general)
+                    .child(self.render_hotkey(cx))
+                    .child(div().h(px(1.)).my_2().bg(border))
                     .child(search)
                     .child(self.render_engines(cx))
                     .child(div().h(px(1.)).my_2().bg(border))

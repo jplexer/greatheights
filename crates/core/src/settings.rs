@@ -6,8 +6,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
+    /// The global shortcut, in GPUI keystroke form (`alt-space`).
+    #[serde(default = "default_hotkey")]
+    pub hotkey: String,
     /// The ACP agent Quick Ask talks to. There is deliberately no default:
     /// asking only works once the user picks an agent.
     #[serde(default)]
@@ -62,6 +65,20 @@ impl SearchEngine {
         };
         format!("{base}{encoded_query}")
     }
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            hotkey: default_hotkey(),
+            agent: None,
+            search_engine: SearchEngine::default(),
+        }
+    }
+}
+
+fn default_hotkey() -> String {
+    "alt-space".into()
 }
 
 /// An unknown engine falls back to the default rather than discarding the
@@ -179,6 +196,7 @@ mod tests {
     fn missing_file_means_no_agent() {
         let settings = Settings::load(Path::new("/nonexistent/settings.json"));
         assert!(settings.agent.is_none());
+        assert_eq!(settings.hotkey, "alt-space");
     }
 
     #[test]
@@ -187,6 +205,7 @@ mod tests {
         let mut agent = AGENT_PRESETS[0].config();
         agent.model = Some("opus".into());
         let settings = Settings {
+            hotkey: "cmd-shift-space".into(),
             agent: Some(agent),
             search_engine: SearchEngine::Kagi,
         };

@@ -2,10 +2,10 @@ use gpui::{Context, Window, WindowBackgroundAppearance};
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSView, NSWindow, NSWindowAnimationBehavior,
-    NSWindowButton,
+    NSApplication, NSApplicationActivationPolicy, NSEvent, NSScreen, NSView, NSWindow,
+    NSWindowAnimationBehavior, NSWindowButton,
 };
-use objc2_foundation::{NSRect, NSSize};
+use objc2_foundation::{NSPoint, NSRect, NSSize};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 pub const WINDOW_BACKGROUND: WindowBackgroundAppearance = WindowBackgroundAppearance::Opaque;
@@ -37,6 +37,28 @@ impl NativeWindow {
 
     pub fn hide(&self) {
         self.0.orderOut(None);
+    }
+
+    /// Moves the window to the screen under the mouse pointer, centered
+    /// horizontally with its top `top_fraction` of the way down.
+    pub fn move_to_pointer_screen(&self, top_fraction: f64) {
+        let pointer = NSEvent::mouseLocation();
+        let screens = NSScreen::screens(self.0.mtm());
+        let Some(screen) = screens.iter().find(|screen| {
+            let f = screen.frame();
+            pointer.x >= f.origin.x
+                && pointer.x < f.origin.x + f.size.width
+                && pointer.y >= f.origin.y
+                && pointer.y < f.origin.y + f.size.height
+        }) else {
+            return;
+        };
+        let area = screen.frame();
+        let size = self.0.frame().size;
+        self.0.setFrameTopLeftPoint(NSPoint::new(
+            area.origin.x + (area.size.width - size.width) / 2.,
+            area.origin.y + area.size.height * (1. - top_fraction),
+        ));
     }
 
     /// Finishes setting up a freshly created launcher window.

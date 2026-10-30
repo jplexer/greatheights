@@ -31,6 +31,8 @@ mod fallback {
 
         pub fn configure_as_panel(&self) {}
 
+        pub fn move_to_pointer_screen(&self, _top_fraction: f64) {}
+
         pub fn request_activation(&self) {}
 
         pub fn app_is_active(&self) -> bool {
