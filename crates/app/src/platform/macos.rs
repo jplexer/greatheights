@@ -1,20 +1,17 @@
-use std::time::Duration;
-
 use gpui::{Context, Window, WindowBackgroundAppearance};
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSView, NSWindow, NSWindowAnimationBehavior,
-    NSWindowStyleMask,
+    NSWindowButton,
 };
 use objc2_foundation::{NSRect, NSSize};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-/// Transparent, so the launcher can draw its own small-radius corners.
-pub const WINDOW_BACKGROUND: WindowBackgroundAppearance = WindowBackgroundAppearance::Transparent;
+pub const WINDOW_BACKGROUND: WindowBackgroundAppearance = WindowBackgroundAppearance::Opaque;
 
-/// Whether the launcher panel draws rounded corners itself.
-pub const ROUNDED_PANEL: bool = true;
+/// macOS draws the panel's border and rounded corners itself.
+pub const DRAW_BORDER: bool = false;
 
 /// Runs as an accessory: no Dock icon, no menu bar.
 pub fn init() {
@@ -42,14 +39,18 @@ impl NativeWindow {
         self.0.orderOut(None);
     }
 
-    /// Turns a freshly created launcher window into a Zed-style panel.
-    /// Borderless, so macOS doesn't clip it to its large window corner
-    /// radius (the panel draws its own); GPUI's window classes still accept
-    /// key status, and the panel stays non-activating.
+    /// Finishes setting up a freshly created launcher window.
     pub fn configure_as_panel(&self) {
-        self.0
-            .setStyleMask(NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel);
-        self.0.setHasShadow(true);
+        // GPUI's pop-up is a titled panel; it has no use for window buttons.
+        for button in [
+            NSWindowButton::CloseButton,
+            NSWindowButton::MiniaturizeButton,
+            NSWindowButton::ZoomButton,
+        ] {
+            if let Some(button) = self.0.standardWindowButton(button) {
+                button.setHidden(true);
+            }
+        }
         // Appear and disappear instantly. AppKit's fade would otherwise show
         // the cleared, bar-sized content stretched over the full window.
         self.0.setAnimationBehavior(NSWindowAnimationBehavior::None);
@@ -102,7 +103,7 @@ pub fn set_content_height<T: 'static>(window: &mut Window, height: f32, cx: &mut
     };
     // Resizing synchronously re-enters GPUI's resize callback while the window
     // is borrowed, so apply it on the next tick like GPUI's own `resize` does.
-    cx.spawn(async move |_, cx| {
+    cx.spawn(async move |_, _| {
         let frame = ns_window.frame();
         let content = ns_window.contentRectForFrameRect(frame);
         if content.size.height == height as f64 {
@@ -114,10 +115,6 @@ pub fn set_content_height<T: 'static>(window: &mut Window, height: f32, cx: &mut
         ));
         new_frame.origin.y = frame.origin.y + frame.size.height - new_frame.size.height;
         ns_window.setFrame_display(new_frame, true);
-        // The shadow of a transparent window follows what's drawn, so
-        // recompute it once the resized content has been painted.
-        cx.background_executor().timer(Duration::from_millis(32)).await;
-        ns_window.invalidateShadow();
     })
     .detach();
 }

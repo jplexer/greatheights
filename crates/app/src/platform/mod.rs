@@ -9,10 +9,10 @@ pub use macos::*;
 mod fallback {
     use gpui::{Context, Window, WindowBackgroundAppearance, px, size};
 
-    /// Transparent windows vary by compositor, so stay opaque and square.
     pub const WINDOW_BACKGROUND: WindowBackgroundAppearance = WindowBackgroundAppearance::Opaque;
 
-    pub const ROUNDED_PANEL: bool = false;
+    /// Pop-ups here are undecorated, so the panel draws its own border.
+    pub const DRAW_BORDER: bool = true;
 
     pub fn init() {}
 

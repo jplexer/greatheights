@@ -23,8 +23,9 @@ actions!(
 const CONTEXT: &str = "Launcher";
 
 const BAR_HEIGHT: f32 = 44.;
-/// The panel's border, drawn inside the window on each side.
-const BORDER: f32 = 1.;
+/// The panel's border, drawn inside the window on each side where the
+/// platform doesn't draw one.
+const BORDER: f32 = if platform::DRAW_BORDER { 1. } else { 0. };
 /// The window height with just the search bar.
 pub const EMPTY_HEIGHT: f32 = BAR_HEIGHT + 2. * BORDER;
 const ROW_HEIGHT: f32 = 32.;
@@ -444,9 +445,9 @@ impl Render for Launcher {
             .flex_col()
             .font_family(theme::UI_FONT)
             .bg(theme.background)
-            .border_1()
-            .border_color(theme.border)
-            .when(platform::ROUNDED_PANEL, |root| root.rounded(px(8.)))
+            .when(platform::DRAW_BORDER, |root| {
+                root.border_1().border_color(theme.border)
+            })
             .text_color(theme.text)
             .child(
                 div()
