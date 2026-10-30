@@ -1,14 +1,15 @@
-//! User settings, read from a JSON file in the platform config directory.
+//! User settings, stored as JSON in the platform config directory and
+//! edited through the settings window.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     /// The ACP agent Quick Ask talks to. There is deliberately no default:
-    /// asking only works once the user picks an agent here.
+    /// asking only works once the user picks an agent.
     #[serde(default)]
     pub agent: Option<AgentConfig>,
 }
@@ -22,7 +23,7 @@ pub struct AgentConfig {
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
 }
 
@@ -35,32 +36,54 @@ impl AgentConfig {
                 .unwrap_or_else(|| self.command.clone())
         })
     }
-}
 
-/// Written when the settings file doesn't exist yet. Nothing is enabled;
-/// the examples (from the ACP registry) are there to copy into `agent`.
-const TEMPLATE: &str = r#"{
-  "agent": null,
-
-  "agent_examples": [
-    {
-      "name": "Claude",
-      "command": "npx",
-      "args": ["-y", "@agentclientprotocol/claude-agent-acp@latest"]
-    },
-    {
-      "name": "Codex",
-      "command": "npx",
-      "args": ["-y", "@agentclientprotocol/codex-acp@latest"]
-    },
-    {
-      "name": "Gemini",
-      "command": "npx",
-      "args": ["-y", "@google/gemini-cli@latest", "--acp"]
+    /// Whether this launches the same agent as `other`, ignoring the name.
+    pub fn same_launch(&self, other: &AgentConfig) -> bool {
+        self.command == other.command && self.args == other.args && self.env == other.env
     }
-  ]
 }
-"#;
+
+/// An agent offered in the settings window, launched the way the ACP
+/// registry describes it.
+pub struct AgentPreset {
+    pub name: &'static str,
+    /// Which account the agent signs in with.
+    pub sign_in: &'static str,
+    command: &'static str,
+    args: &'static [&'static str],
+}
+
+impl AgentPreset {
+    pub fn config(&self) -> AgentConfig {
+        AgentConfig {
+            name: Some(self.name.to_owned()),
+            command: self.command.to_owned(),
+            args: self.args.iter().map(|a| a.to_string()).collect(),
+            env: BTreeMap::new(),
+        }
+    }
+}
+
+pub const AGENT_PRESETS: &[AgentPreset] = &[
+    AgentPreset {
+        name: "Claude",
+        sign_in: "Uses your Claude Code login",
+        command: "npx",
+        args: &["-y", "@agentclientprotocol/claude-agent-acp@latest"],
+    },
+    AgentPreset {
+        name: "Codex",
+        sign_in: "Uses your Codex / ChatGPT login",
+        command: "npx",
+        args: &["-y", "@agentclientprotocol/codex-acp@latest"],
+    },
+    AgentPreset {
+        name: "Gemini",
+        sign_in: "Uses your Gemini CLI login",
+        command: "npx",
+        args: &["-y", "@google/gemini-cli@latest", "--acp"],
+    },
+];
 
 impl Settings {
     pub fn load(path: &Path) -> Self {
@@ -73,16 +96,12 @@ impl Settings {
         })
     }
 
-    /// Creates the settings file from the template if it's missing, so
-    /// "open settings" always has something to open.
-    pub fn ensure_file(path: &Path) -> std::io::Result<()> {
-        if path.exists() {
-            return Ok(());
-        }
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, TEMPLATE)
+        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        std::fs::write(path, json + "\n")
     }
 }
 
@@ -95,17 +114,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn template_has_no_agent() {
-        let settings: Settings = serde_json::from_str(TEMPLATE).unwrap();
+    fn missing_file_means_no_agent() {
+        let settings = Settings::load(Path::new("/nonexistent/settings.json"));
         assert!(settings.agent.is_none());
     }
 
     #[test]
-    fn template_examples_parse_as_agents() {
-        let value: serde_json::Value = serde_json::from_str(TEMPLATE).unwrap();
-        let examples: Vec<AgentConfig> =
-            serde_json::from_value(value["agent_examples"].clone()).unwrap();
-        assert_eq!(examples[0].display_name(), "Claude");
+    fn round_trips_through_disk() {
+        let path = std::env::temp_dir().join("greatheights-settings-test.json");
+        let settings = Settings {
+            agent: Some(AGENT_PRESETS[0].config()),
+        };
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::load(&path), settings);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn presets_match_regardless_of_name() {
+        let mut renamed = AGENT_PRESETS[1].config();
+        renamed.name = Some("My Codex".into());
+        assert!(renamed.same_launch(&AGENT_PRESETS[1].config()));
+        assert!(!renamed.same_launch(&AGENT_PRESETS[0].config()));
     }
 
     #[test]

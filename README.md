@@ -35,19 +35,9 @@ them.
 
 Any [Agent Client Protocol](https://agentclientprotocol.com) agent works, so
 you can use the Claude, Codex or Gemini subscription you already have. There
-is no default: pick one in the settings file (search "Greatheights
-Settings"), which lives at `~/Library/Application Support/greatheights/settings.json`
-on macOS. It starts with `"agent": null` and a few examples to copy:
-
-```json
-{
-  "agent": {
-    "name": "Claude",
-    "command": "npx",
-    "args": ["-y", "@agentclientprotocol/claude-agent-acp@latest"]
-  }
-}
-```
+is no default: pick one in the settings window (search "Greatheights
+Settings", or press Tab before choosing one). It offers Claude, Codex,
+Gemini or any custom ACP command, and a Test button to check it works.
 
 The agent signs in with its own CLI (for Claude, the Claude Code login).
 Each question runs in an empty scratch folder and every permission request

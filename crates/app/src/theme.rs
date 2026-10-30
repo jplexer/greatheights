@@ -12,6 +12,10 @@ pub struct Theme {
     pub accent: Hsla,
     pub selection: Hsla,
     pub error: Hsla,
+    /// Opaque background for regular windows such as settings.
+    pub surface: Hsla,
+    /// Background of text fields and buttons.
+    pub field: Hsla,
 }
 
 impl Global for Theme {}
@@ -36,6 +40,8 @@ impl Theme {
                 accent: hsla(212. / 360., 1., 0.62, 1.),
                 selection: hsla(212. / 360., 1., 0.62, 0.35),
                 error: hsla(2. / 360., 0.9, 0.68, 1.),
+                surface: hsla(240. / 360., 0.06, 0.12, 1.),
+                field: hsla(0., 0., 1., 0.07),
             },
             WindowAppearance::Light | WindowAppearance::VibrantLight => Self {
                 background: hsla(0., 0., 0.98, 0.25),
@@ -46,6 +52,8 @@ impl Theme {
                 accent: hsla(212. / 360., 1., 0.48, 1.),
                 selection: hsla(212. / 360., 1., 0.48, 0.25),
                 error: hsla(2. / 360., 0.75, 0.48, 1.),
+                surface: hsla(0., 0., 0.97, 1.),
+                field: hsla(0., 0., 0., 0.05),
             },
         }
     }

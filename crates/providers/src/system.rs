@@ -1,7 +1,5 @@
 //! System commands: lock, sleep, restart and friends.
 
-use std::path::PathBuf;
-
 use greatheights_core::{Action, Icon, Item, Matcher, Provider, Run};
 
 struct Command {
@@ -19,14 +17,13 @@ pub struct SystemProvider {
 }
 
 impl SystemProvider {
-    /// `settings` is the settings file, for the "open settings" command.
-    pub fn new(settings: PathBuf) -> Self {
+    pub fn new() -> Self {
         let mut commands = platform_commands();
         commands.push(Command {
             title: "Greatheights Settings",
             keywords: &["settings", "preferences", "config"],
             disruptive: false,
-            run: Run::OpenPath(settings),
+            run: Run::OpenSettings,
         });
         commands.push(Command {
             title: "Quit Greatheights",
@@ -35,6 +32,12 @@ impl SystemProvider {
             run: Run::Quit,
         });
         Self { commands }
+    }
+}
+
+impl Default for SystemProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -214,7 +217,7 @@ mod tests {
     use super::*;
 
     fn titles(query: &str) -> Vec<String> {
-        SystemProvider::new(PathBuf::from("settings.json"))
+        SystemProvider::new()
             .search(query, &mut Matcher::new(query))
             .into_iter()
             .map(|item| item.title)

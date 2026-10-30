@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use greatheights_ai::AskEvent;
-use greatheights_core::{Action, Engine, Icon, Item, Run, Settings};
+use greatheights_core::{Action, Engine, Icon, Item, Run};
 use gpui::{
     App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable, KeyBinding, MouseMoveEvent,
     Pixels, Point, ScrollStrategy, SharedString, Stateful, Subscription, UniformListScrollHandle,
@@ -13,7 +13,7 @@ use crate::answer::{Answer, Status};
 use crate::input::{InputChanged, TextInput};
 use crate::theme::Theme;
 use crate::window::{AskerHandle, Config};
-use crate::{platform, window};
+use crate::{platform, settings, window};
 
 actions!(
     launcher,
@@ -268,6 +268,13 @@ impl Launcher {
                 cx.quit();
                 return;
             }
+            Run::OpenSettings => {
+                cx.defer(|cx| {
+                    window::hide(cx);
+                    settings::open(cx);
+                });
+                return;
+            }
             _ => self.engine.execute(item, action),
         }
         cx.defer(|cx| window::hide(cx));
@@ -366,19 +373,14 @@ fn ask_item(question: &str, cx: &App) -> Item {
                 score: 0,
             }
         }
-        None => {
-            if let Err(err) = Settings::ensure_file(&config.path) {
-                log::warn!("couldn't create {}: {err}", config.path.display());
-            }
-            Item {
-                id: String::new(),
-                title: "Set up an agent for Quick Ask".into(),
-                subtitle: Some("Open settings".into()),
-                icon: Icon::Glyph("?"),
-                actions: vec![Action::new("Open Settings", Run::OpenPath(config.path.clone()))],
-                score: 0,
-            }
-        }
+        None => Item {
+            id: String::new(),
+            title: "Set up an agent for Quick Ask".into(),
+            subtitle: Some("Open Settings".into()),
+            icon: Icon::Glyph("?"),
+            actions: vec![Action::new("Open Settings", Run::OpenSettings)],
+            score: 0,
+        },
     }
 }
 

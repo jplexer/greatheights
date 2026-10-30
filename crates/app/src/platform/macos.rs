@@ -87,6 +87,43 @@ impl NativeWindow {
     pub fn hide(&self) {
         self.0.orderOut(None);
     }
+
+    /// Asks to make the app frontmost so a regular window (settings) can
+    /// take focus. An accessory app can't reliably come forward, so it
+    /// becomes a regular app (with a Dock icon) until [`run_in_background`].
+    /// macOS may decline; check [`NativeWindow::app_is_active`].
+    pub fn request_activation(&self) {
+        let app = NSApplication::sharedApplication(self.0.mtm());
+        app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+        #[allow(deprecated)]
+        app.activateIgnoringOtherApps(true);
+    }
+
+    pub fn app_is_active(&self) -> bool {
+        NSApplication::sharedApplication(self.0.mtm()).isActive()
+    }
+
+    /// Shows the window in front, focused only if the app is active.
+    ///
+    /// GPUI 0.2 deadlocks when a regular window becomes key while the app
+    /// is inactive (its key-change handler calls `resignKeyWindow` while
+    /// holding the window's lock), so an inactive app only orders it in
+    /// front; the user's first click then focuses it.
+    pub fn present(&self) {
+        if self.app_is_active() {
+            self.0.makeKeyAndOrderFront(None);
+        } else {
+            self.0.orderFrontRegardless();
+        }
+    }
+}
+
+/// Goes back to being an accessory app once no regular window is open.
+pub fn run_in_background() {
+    if let Some(mtm) = MainThreadMarker::new() {
+        NSApplication::sharedApplication(mtm)
+            .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    }
 }
 
 /// Resizes the window while keeping its top edge in place. AppKit's

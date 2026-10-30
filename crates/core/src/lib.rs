@@ -14,7 +14,7 @@ use std::path::PathBuf;
 pub use engine::Engine;
 pub use frecency::Frecency;
 pub use matcher::Matcher;
-pub use settings::{AgentConfig, Settings, settings_path};
+pub use settings::{AGENT_PRESETS, AgentConfig, AgentPreset, Settings, settings_path};
 
 #[derive(Clone, Debug)]
 pub struct Item {
@@ -76,6 +76,8 @@ pub enum Run {
     Quit,
     /// Ask the configured agent; handled by the UI.
     Ask(String),
+    /// Open the settings window; handled by the UI.
+    OpenSettings,
 }
 
 pub trait Provider: Send + Sync {

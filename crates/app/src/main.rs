@@ -3,6 +3,7 @@ mod hotkey;
 mod input;
 mod launcher;
 mod platform;
+mod settings;
 mod theme;
 mod window;
 
@@ -25,16 +26,14 @@ fn main() {
     let config_path = std::env::var_os("GREATHEIGHTS_SETTINGS")
         .map(std::path::PathBuf::from)
         .unwrap_or(config_path);
-    if let Err(err) = Settings::ensure_file(&config_path) {
-        log::warn!("couldn't create {}: {err}", config_path.display());
-    }
-    let engine = Arc::new(build_engine(&config_path));
+    let engine = Arc::new(build_engine());
 
     Application::new().run(move |cx| {
         platform::init();
         Theme::init(cx);
         input::bind_keys(cx);
         launcher::bind_keys(cx);
+        settings::bind_keys(cx);
         cx.set_global(EngineHandle(engine));
         cx.set_global(AskerHandle(Arc::new(Asker::new())));
         cx.set_global(Config {
@@ -45,16 +44,18 @@ fn main() {
         window::show(cx);
         #[cfg(debug_assertions)]
         window::run_demo(cx);
+        #[cfg(debug_assertions)]
+        settings::debug_open(cx);
     });
 }
 
-fn build_engine(config_path: &std::path::Path) -> Engine {
+fn build_engine() -> Engine {
     let cache = app_dir(dirs::cache_dir());
     let data = app_dir(dirs::data_dir());
     Engine::new(
         vec![
             Arc::new(AppProvider::new(cache.join("icons"))),
-            Arc::new(SystemProvider::new(config_path.to_owned())),
+            Arc::new(SystemProvider::new()),
             Arc::new(CalcProvider::new(cache.join("rates.json"))),
             Arc::new(WebProvider::new()),
         ],

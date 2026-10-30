@@ -36,7 +36,17 @@ mod fallback {
         pub fn show(&self) {}
 
         pub fn hide(&self) {}
+
+        pub fn request_activation(&self) {}
+
+        pub fn app_is_active(&self) -> bool {
+            true
+        }
+
+        pub fn present(&self) {}
     }
+
+    pub fn run_in_background() {}
 
     /// Other platforms already keep the top-left corner fixed on resize.
     pub fn set_content_height<T>(window: &mut Window, height: f32, _cx: &mut Context<T>) {
