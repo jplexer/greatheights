@@ -12,6 +12,63 @@ pub struct Settings {
     /// asking only works once the user picks an agent.
     #[serde(default)]
     pub agent: Option<AgentConfig>,
+    /// Where queries go when nothing else matches and no bang is used.
+    #[serde(default, deserialize_with = "lenient_engine")]
+    pub search_engine: SearchEngine,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchEngine {
+    #[default]
+    Startpage,
+    Kagi,
+    Google,
+    DuckDuckGo,
+    Bing,
+    Ecosia,
+}
+
+impl SearchEngine {
+    pub const ALL: [SearchEngine; 6] = [
+        SearchEngine::Startpage,
+        SearchEngine::Kagi,
+        SearchEngine::Google,
+        SearchEngine::DuckDuckGo,
+        SearchEngine::Bing,
+        SearchEngine::Ecosia,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SearchEngine::Startpage => "Startpage",
+            SearchEngine::Kagi => "Kagi",
+            SearchEngine::Google => "Google",
+            SearchEngine::DuckDuckGo => "DuckDuckGo",
+            SearchEngine::Bing => "Bing",
+            SearchEngine::Ecosia => "Ecosia",
+        }
+    }
+
+    /// The results page for an already URL-encoded query.
+    pub fn search_url(self, encoded_query: &str) -> String {
+        let base = match self {
+            SearchEngine::Startpage => "https://www.startpage.com/do/search?q=",
+            SearchEngine::Kagi => "https://kagi.com/search?q=",
+            SearchEngine::Google => "https://www.google.com/search?q=",
+            SearchEngine::DuckDuckGo => "https://duckduckgo.com/?q=",
+            SearchEngine::Bing => "https://www.bing.com/search?q=",
+            SearchEngine::Ecosia => "https://www.ecosia.org/search?q=",
+        };
+        format!("{base}{encoded_query}")
+    }
+}
+
+/// An unknown engine falls back to the default rather than discarding the
+/// whole settings file.
+fn lenient_engine<'de, D: serde::Deserializer<'de>>(de: D) -> Result<SearchEngine, D::Error> {
+    let value = serde_json::Value::deserialize(de)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
 }
 
 /// How to launch an Agent Client Protocol agent.
@@ -25,6 +82,9 @@ pub struct AgentConfig {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// The agent's model id; `None` keeps the agent's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl AgentConfig {
@@ -37,7 +97,8 @@ impl AgentConfig {
         })
     }
 
-    /// Whether this launches the same agent as `other`, ignoring the name.
+    /// Whether this launches the same agent as `other`, ignoring the name
+    /// and model.
     pub fn same_launch(&self, other: &AgentConfig) -> bool {
         self.command == other.command && self.args == other.args && self.env == other.env
     }
@@ -60,6 +121,7 @@ impl AgentPreset {
             command: self.command.to_owned(),
             args: self.args.iter().map(|a| a.to_string()).collect(),
             env: BTreeMap::new(),
+            model: None,
         }
     }
 }
@@ -122,8 +184,11 @@ mod tests {
     #[test]
     fn round_trips_through_disk() {
         let path = std::env::temp_dir().join("greatheights-settings-test.json");
+        let mut agent = AGENT_PRESETS[0].config();
+        agent.model = Some("opus".into());
         let settings = Settings {
-            agent: Some(AGENT_PRESETS[0].config()),
+            agent: Some(agent),
+            search_engine: SearchEngine::Kagi,
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);
@@ -136,6 +201,24 @@ mod tests {
         renamed.name = Some("My Codex".into());
         assert!(renamed.same_launch(&AGENT_PRESETS[1].config()));
         assert!(!renamed.same_launch(&AGENT_PRESETS[0].config()));
+    }
+
+    #[test]
+    fn unknown_search_engine_keeps_the_rest() {
+        let settings: Settings = serde_json::from_str(
+            r#"{"search_engine": "altavista", "agent": {"command": "x"}}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.search_engine, SearchEngine::Startpage);
+        assert!(settings.agent.is_some());
+    }
+
+    #[test]
+    fn engines_serialize_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&SearchEngine::DuckDuckGo).unwrap(),
+            r#""duckduckgo""#
+        );
     }
 
     #[test]

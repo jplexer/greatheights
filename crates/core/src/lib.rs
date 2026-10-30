@@ -14,7 +14,9 @@ use std::path::PathBuf;
 pub use engine::Engine;
 pub use frecency::Frecency;
 pub use matcher::Matcher;
-pub use settings::{AGENT_PRESETS, AgentConfig, AgentPreset, Settings, settings_path};
+pub use settings::{
+    AGENT_PRESETS, AgentConfig, AgentPreset, SearchEngine, Settings, settings_path,
+};
 
 #[derive(Clone, Debug)]
 pub struct Item {

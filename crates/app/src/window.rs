@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use greatheights_ai::Asker;
 use greatheights_core::{Engine, Settings};
+use greatheights_providers::WebProvider;
 use gpui::{
     App, AppContext, Bounds, Focusable, Global, ImgResourceLoader, Resource, WindowBounds,
     WindowHandle, WindowKind, WindowOptions, point, px, size,
@@ -36,6 +37,18 @@ pub struct Config {
 }
 
 impl Global for Config {}
+
+pub struct WebHandle(pub Arc<WebProvider>);
+
+impl Global for WebHandle {}
+
+/// Installs new settings and passes them to the parts that cache them.
+pub fn set_config(config: Config, cx: &mut App) {
+    if let Some(web) = cx.try_global::<WebHandle>() {
+        web.0.set_engine(config.settings.search_engine);
+    }
+    cx.set_global(config);
+}
 
 #[derive(Default)]
 struct State {
@@ -91,10 +104,13 @@ pub fn show(cx: &mut App) {
     refresh(engine.clone(), cx);
     cx.set_global(Theme::for_appearance(cx.window_appearance()));
     let path = cx.global::<Config>().path.clone();
-    cx.set_global(Config {
-        settings: Settings::load(&path),
-        path,
-    });
+    set_config(
+        Config {
+            settings: Settings::load(&path),
+            path,
+        },
+        cx,
+    );
 
     let handle = match cx.default_global::<State>().handle {
         Some(handle) => handle,

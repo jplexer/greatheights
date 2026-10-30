@@ -3,8 +3,12 @@
 //!
 //! For each prompt it streams "Hello", asks for permission, then streams
 //! whether the permission was granted. A prompt containing "SLOW" instead
-//! waits for `session/cancel` and ends the turn as cancelled, and one
-//! containing "LONG" slowly streams a few paragraphs, for trying the UI.
+//! waits for `session/cancel` and ends the turn as cancelled, one
+//! containing "LONG" slowly streams a few paragraphs, for trying the UI, and
+//! one containing "MODEL" replies with the session's model. Sessions offer
+//! two models, "fast" (the default) and "smart".
+
+use std::collections::HashMap;
 
 use std::io::{BufRead, Write};
 
@@ -14,6 +18,7 @@ fn main() {
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
     let mut sessions = 0;
+    let mut models: HashMap<String, String> = HashMap::new();
 
     while let Some(Ok(line)) = lines.next() {
         let Ok(message) = serde_json::from_str::<Value>(&line) else {
@@ -27,11 +32,30 @@ fn main() {
             ),
             Some("session/new") => {
                 sessions += 1;
-                reply(&id, json!({ "sessionId": format!("s{sessions}") }));
+                let session = format!("s{sessions}");
+                models.insert(session.clone(), "fast".into());
+                reply(
+                    &id,
+                    json!({ "sessionId": session, "configOptions": [model_option("fast")] }),
+                );
+            }
+            Some("session/set_config_option") => {
+                let params = &message["params"];
+                let session = params["sessionId"].as_str().unwrap_or_default().to_owned();
+                let model = params["value"].as_str().unwrap_or_default().to_owned();
+                let option = model_option(&model);
+                models.insert(session, model);
+                reply(&id, json!({ "configOptions": [option] }));
             }
             Some("session/prompt") => {
                 let session = message["params"]["sessionId"].clone();
                 let prompt = message["params"]["prompt"][0]["text"].as_str().unwrap_or("");
+                if prompt.contains("MODEL") {
+                    let model = &models[session.as_str().unwrap_or_default()];
+                    chunk(&session, &format!("model={model}"));
+                    reply(&id, json!({ "stopReason": "end_turn" }));
+                    continue;
+                }
                 if prompt.contains("LONG") {
                     for word in LONG_ANSWER.split_inclusive(' ') {
                         chunk(&session, word);
@@ -76,6 +100,20 @@ returning another wrapped value.\n\nIn Rust terms, Option and Result behave mona
 bind, and Some or Ok wraps a value. The ? operator is sugar for the same idea, short-circuiting on \
 None or Err.\n\nThe laws (left identity, right identity, associativity) just guarantee that \
 chaining behaves the way you'd expect regardless of how you group the steps.";
+
+fn model_option(current: &str) -> Value {
+    json!({
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": current,
+        "options": [
+            { "value": "fast", "name": "Fast" },
+            { "value": "smart", "name": "Smart", "description": "Slower, better" }
+        ]
+    })
+}
 
 fn wait_for(
     lines: &mut impl Iterator<Item = std::io::Result<String>>,

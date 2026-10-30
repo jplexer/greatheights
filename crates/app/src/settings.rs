@@ -2,18 +2,19 @@
 
 use std::time::Duration;
 
-use greatheights_ai::{Ask, AskEvent};
-use greatheights_core::{AGENT_PRESETS, AgentConfig, Settings};
+use greatheights_ai::{Ask, AskEvent, Models};
+use greatheights_core::{AGENT_PRESETS, AgentConfig, SearchEngine, Settings};
 use gpui::{
-    App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, Global, KeyBinding,
-    MouseButton, SharedString, Subscription, Task, TitlebarOptions, Window, WindowBounds,
-    WindowHandle, WindowKind, WindowOptions, actions, div, prelude::*, px, size,
+    AnyElement, App, AppContext, Bounds, Context, Div, ElementId, Entity, FocusHandle, Focusable,
+    Global, KeyBinding, MouseButton, SharedString, Stateful, Subscription, Task, TitlebarOptions,
+    Window, WindowBounds, WindowHandle, WindowKind, WindowOptions, actions, div, prelude::*, px,
+    size,
 };
 
 use crate::input::{InputChanged, TextInput};
 use crate::platform;
 use crate::theme::Theme;
-use crate::window::{AskerHandle, Config};
+use crate::window::{self, AskerHandle, Config};
 
 actions!(settings, [Close, NextField]);
 
@@ -45,8 +46,7 @@ pub fn open(cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            // Tall enough for the custom agent fields.
-            size(px(520.), px(590.)),
+            size(px(540.), px(680.)),
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
@@ -58,7 +58,7 @@ pub fn open(cx: &mut App) {
         focus: false,
         show: false,
         kind: WindowKind::Normal,
-        is_resizable: false,
+        is_resizable: true,
         is_minimizable: false,
         app_id: Some("greatheights".into()),
         ..Default::default()
@@ -128,9 +128,22 @@ enum TestState {
     Failed(String),
 }
 
+/// The models the chosen agent offers. Listing them starts the agent.
+enum ModelsState {
+    /// Not asked for yet (a custom command still being typed).
+    NotLoaded,
+    Loading { _task: Task<()> },
+    Loaded(Models),
+    Failed(String),
+}
+
 pub struct SettingsView {
     focus: FocusHandle,
+    search_engine: SearchEngine,
     choice: Choice,
+    /// The chosen model id; `None` is the agent's default.
+    model: Option<String>,
+    models: ModelsState,
     name: Entity<TextInput>,
     command: Entity<TextInput>,
     args: Entity<TextInput>,
@@ -140,7 +153,8 @@ pub struct SettingsView {
 
 impl SettingsView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let agent = cx.global::<Config>().settings.agent.clone();
+        let settings = cx.global::<Config>().settings.clone();
+        let agent = settings.agent.clone();
         let choice = match &agent {
             None => Choice::Off,
             Some(agent) => AGENT_PRESETS
@@ -149,7 +163,7 @@ impl SettingsView {
                 .map_or(Choice::Custom, Choice::Preset),
         };
         // Custom fields start from the configured custom agent, if any.
-        let custom = agent.filter(|_| choice == Choice::Custom);
+        let custom = agent.clone().filter(|_| choice == Choice::Custom);
         let field = |placeholder: &str, text: String, cx: &mut Context<Self>| {
             cx.new(|cx| {
                 let mut input = TextInput::new(placeholder.to_owned(), cx);
@@ -157,8 +171,16 @@ impl SettingsView {
                 input
             })
         };
-        let name = field("My Agent", custom.as_ref().and_then(|a| a.name.clone()).unwrap_or_default(), cx);
-        let command = field("my-agent", custom.as_ref().map(|a| a.command.clone()).unwrap_or_default(), cx);
+        let name = field(
+            "My Agent",
+            custom.as_ref().and_then(|a| a.name.clone()).unwrap_or_default(),
+            cx,
+        );
+        let command = field(
+            "my-agent",
+            custom.as_ref().map(|a| a.command.clone()).unwrap_or_default(),
+            cx,
+        );
         let args = field(
             "--acp",
             custom.as_ref().map(|a| a.args.join(" ")).unwrap_or_default(),
@@ -170,6 +192,9 @@ impl SettingsView {
             .map(|input| {
                 cx.subscribe(input, |this, _, _: &InputChanged, cx| {
                     if this.choice == Choice::Custom {
+                        // A different command may offer different models.
+                        this.model = None;
+                        this.models = ModelsState::NotLoaded;
                         this.save(cx);
                     }
                 })
@@ -183,28 +208,33 @@ impl SettingsView {
 
         let focus = cx.focus_handle();
         window.focus(&focus);
-        Self {
+        let mut view = Self {
             focus,
+            search_engine: settings.search_engine,
             choice,
+            model: agent.and_then(|a| a.model),
+            models: ModelsState::NotLoaded,
             name,
             command,
             args,
             test: TestState::Idle,
             _subscriptions: subscriptions,
-        }
+        };
+        view.load_models(window, cx);
+        view
     }
 
     fn agent(&self, cx: &App) -> Option<AgentConfig> {
-        match self.choice {
-            Choice::Off => None,
-            Choice::Preset(index) => Some(AGENT_PRESETS[index].config()),
+        let mut agent = match self.choice {
+            Choice::Off => return None,
+            Choice::Preset(index) => AGENT_PRESETS[index].config(),
             Choice::Custom => {
                 let command = self.command.read(cx).text().trim().to_owned();
                 if command.is_empty() {
                     return None;
                 }
                 let name = self.name.read(cx).text().trim().to_owned();
-                Some(AgentConfig {
+                AgentConfig {
                     name: (!name.is_empty()).then_some(name),
                     command,
                     args: self
@@ -215,20 +245,24 @@ impl SettingsView {
                         .map(str::to_owned)
                         .collect(),
                     env: Default::default(),
-                })
+                    model: None,
+                }
             }
-        }
+        };
+        agent.model = self.model.clone();
+        Some(agent)
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
         let settings = Settings {
             agent: self.agent(cx),
+            search_engine: self.search_engine,
         };
         let path = cx.global::<Config>().path.clone();
         if let Err(err) = settings.save(&path) {
             log::error!("couldn't save settings to {}: {err}", path.display());
         }
-        cx.set_global(Config { path, settings });
+        window::set_config(Config { path, settings }, cx);
         // A previous result says nothing about the new agent.
         self.test = TestState::Idle;
         cx.notify();
@@ -239,10 +273,50 @@ impl SettingsView {
             return;
         }
         self.choice = choice;
+        self.model = None;
+        self.models = ModelsState::NotLoaded;
         self.save(cx);
-        if choice == Choice::Custom {
-            window.focus(&self.command.focus_handle(cx));
+        match choice {
+            Choice::Custom => window.focus(&self.command.focus_handle(cx)),
+            _ => self.load_models(window, cx),
         }
+    }
+
+    fn choose_model(&mut self, model: Option<String>, cx: &mut Context<Self>) {
+        if model != self.model {
+            self.model = model;
+            self.save(cx);
+        }
+    }
+
+    fn choose_engine(&mut self, engine: SearchEngine, cx: &mut Context<Self>) {
+        if engine != self.search_engine {
+            self.search_engine = engine;
+            self.save(cx);
+        }
+    }
+
+    fn load_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(agent) = self.agent(cx) else {
+            self.models = ModelsState::NotLoaded;
+            return;
+        };
+        let models = cx.global::<AskerHandle>().0.models(&agent);
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let result = models
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err("The agent stopped.".into()));
+            let _ = this.update(cx, |this, cx| {
+                this.models = match result {
+                    Ok(models) => ModelsState::Loaded(models),
+                    Err(err) => ModelsState::Failed(err),
+                };
+                cx.notify();
+            });
+        });
+        self.models = ModelsState::Loading { _task: task };
+        cx.notify();
     }
 
     pub fn test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -345,14 +419,7 @@ impl SettingsView {
             .flex()
             .items_center()
             .gap_3()
-            .child(
-                div()
-                    .w(px(84.))
-                    .flex_none()
-                    .text_size(px(13.))
-                    .text_color(theme.text_muted)
-                    .child(label),
-            )
+            .child(label_cell(label, theme))
             .child(
                 div()
                     .flex_1()
@@ -371,6 +438,88 @@ impl SettingsView {
                     .on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
                     .child(input.clone()),
             )
+    }
+
+    fn render_engines(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.global::<Theme>();
+        let pills = SearchEngine::ALL.into_iter().map(|engine| {
+            pill(engine.name(), engine.name(), engine == self.search_engine, theme)
+                .on_click(cx.listener(move |this, _, _, cx| this.choose_engine(engine, cx)))
+        });
+        div().flex().flex_wrap().gap_2().children(pills)
+    }
+
+    fn render_models(&self, agent: &AgentConfig, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.global::<Theme>();
+        let note = |text: String, color| {
+            div()
+                .text_size(px(12.))
+                .text_color(color)
+                .child(text)
+                .into_any_element()
+        };
+        let load_button = |label: &'static str| {
+            pill("load-models", label, false, theme)
+                .on_click(cx.listener(|this, _, window, cx| this.load_models(window, cx)))
+                .into_any_element()
+        };
+        let content = match &self.models {
+            ModelsState::NotLoaded => load_button("Load models"),
+            ModelsState::Loading { .. } => note(
+                format!("Starting {} to list its models…", agent.display_name()),
+                theme.text_muted,
+            ),
+            ModelsState::Failed(err) => div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(load_button("Retry"))
+                .child(note(err.clone(), theme.error))
+                .into_any_element(),
+            ModelsState::Loaded(models) if models.choices.is_empty() => note(
+                format!("{} doesn't offer a model choice.", agent.display_name()),
+                theme.text_muted,
+            ),
+            ModelsState::Loaded(models) => {
+                let default_name = models
+                    .default
+                    .as_ref()
+                    .and_then(|id| models.choices.iter().find(|c| &c.id == id))
+                    .map_or("Default".to_owned(), |c| format!("Default ({})", c.name));
+                let default = pill("model-default", default_name, self.model.is_none(), theme)
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_model(None, cx)));
+                let choices = models.choices.iter().map(|choice| {
+                    let id = choice.id.clone();
+                    let selected = self.model.as_deref() == Some(choice.id.as_str());
+                    pill(
+                        SharedString::from(format!("model-{}", choice.id)),
+                        choice.name.clone(),
+                        selected,
+                        theme,
+                    )
+                    .when_some(choice.description.clone(), |pill, description| {
+                        pill.tooltip(move |_, cx| cx.new(|_| Tooltip(description.clone().into())).into())
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.choose_model(Some(id.clone()), cx)
+                    }))
+                });
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(default)
+                    .children(choices)
+                    .into_any_element()
+            }
+        };
+        div()
+            .flex()
+            .items_start()
+            .gap_3()
+            .child(label_cell("Model", theme).pt(px(4.)))
+            .child(div().flex_1().min_w_0().child(content))
+            .into_any_element()
     }
 
     fn render_test(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -419,6 +568,75 @@ impl SettingsView {
     }
 }
 
+fn section(title: &'static str, description: &'static str, theme: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_size(px(17.)).child(title))
+        .child(
+            div()
+                .text_size(px(13.))
+                .text_color(theme.text_muted)
+                .child(description),
+        )
+}
+
+fn label_cell(label: &'static str, theme: &Theme) -> Div {
+    div()
+        .w(px(84.))
+        .flex_none()
+        .text_size(px(13.))
+        .text_color(theme.text_muted)
+        .child(label)
+}
+
+/// A selectable rounded chip, for short lists of choices.
+fn pill(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    selected: bool,
+    theme: &Theme,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .px_3()
+        .py_1()
+        .rounded_full()
+        .border_1()
+        .text_size(px(13.))
+        .map(|pill| {
+            if selected {
+                pill.bg(theme.selection).border_color(theme.accent)
+            } else {
+                pill.bg(theme.field)
+                    .border_color(theme.border)
+                    .hover(|pill| pill.bg(theme.row_selected))
+            }
+        })
+        .child(label.into())
+}
+
+/// A plain text tooltip.
+struct Tooltip(SharedString);
+
+impl Render for Tooltip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.global::<Theme>();
+        div()
+            .px_2()
+            .py_1()
+            .rounded(px(6.))
+            .bg(theme.surface)
+            .border_1()
+            .border_color(theme.border)
+            .text_size(px(12.))
+            .text_color(theme.text)
+            .font_family(platform::UI_FONT)
+            .child(self.0.clone())
+    }
+}
+
 impl Focusable for SettingsView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -428,7 +646,19 @@ impl Focusable for SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        let (text, muted, surface) = (theme.text, theme.text_muted, theme.surface);
+        let (text, surface, border) = (theme.text, theme.surface, theme.border);
+        let search = section(
+            "Search",
+            "Where a query goes when nothing else matches. Bangs like !g always work.",
+            theme,
+        );
+        let quick_ask = section(
+            "Quick Ask",
+            "Press Tab in the search bar, or start with ?, to ask an AI agent. The agent \
+             signs in with its own account and can answer, but never edits files or runs \
+             commands.",
+            theme,
+        );
 
         let mut options = vec![
             self.render_option("off", Choice::Off, "Off".into(), "Quick Ask disabled".into(), cx)
@@ -466,34 +696,35 @@ impl Render for SettingsView {
                 .child(self.render_field("Command", &self.command, cx))
                 .child(self.render_field("Arguments", &self.args, cx))
         });
+        let models = self
+            .agent(cx)
+            .map(|agent| self.render_models(&agent, cx));
 
         div()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::close))
             .on_action(cx.listener(Self::next_field))
+            .id("settings")
             .size_full()
-            .p_6()
-            .flex()
-            .flex_col()
-            .gap_4()
+            .overflow_y_scroll()
             .font_family(platform::UI_FONT)
             .bg(surface)
             .text_color(text)
             .child(
                 div()
+                    .p_6()
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .child(div().text_size(px(17.)).child("Quick Ask"))
-                    .child(div().text_size(px(13.)).text_color(muted).child(
-                        "Press Tab in the search bar, or start with ?, to ask an AI agent. \
-                         The agent signs in with its own account and can answer, but never \
-                         edits files or runs commands.",
-                    )),
+                    .gap_4()
+                    .child(search)
+                    .child(self.render_engines(cx))
+                    .child(div().h(px(1.)).my_2().bg(border))
+                    .child(quick_ask)
+                    .child(div().flex().flex_col().gap_1().children(options))
+                    .children(custom_fields)
+                    .children(models)
+                    .child(self.render_test(cx)),
             )
-            .child(div().flex().flex_col().gap_1().children(options))
-            .children(custom_fields)
-            .child(self.render_test(cx))
     }
 }

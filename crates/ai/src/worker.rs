@@ -5,22 +5,44 @@ use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionKind,
-    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionId, SessionNotification, SessionUpdate, TextContent,
+    CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, NewSessionResponse,
+    PermissionOptionKind, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionConfigKind, SessionConfigOption,
+    SessionConfigOptionCategory, SessionConfigOptionValue, SessionConfigSelectOptions, SessionId,
+    SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, TextContent,
 };
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, Client, ConnectionTo};
 use async_channel::{Receiver, Sender};
 use futures::future::{Either, select};
 use greatheights_core::AgentConfig;
 
-use crate::{AskEvent, path};
+use crate::{AskEvent, ModelChoice, Models, path};
 
-pub struct Job {
+pub enum Job {
+    Ask(AskJob),
+    Models(Sender<Result<Models, String>>),
+}
+
+pub struct AskJob {
     pub question: String,
+    /// Model id to switch the session to, if not the agent's default.
+    pub model: Option<String>,
     pub events: Sender<AskEvent>,
     /// Fires, or closes, when the asker gives up on the answer.
     pub cancelled: Receiver<()>,
+}
+
+impl Job {
+    fn fail(self, reason: String) {
+        match self {
+            Job::Ask(job) => {
+                let _ = job.events.try_send(AskEvent::Failed(reason));
+            }
+            Job::Models(reply) => {
+                let _ = reply.try_send(Err(reason));
+            }
+        }
+    }
 }
 
 pub struct Worker {
@@ -58,7 +80,7 @@ impl Worker {
                     let _ = events.try_send(AskEvent::Failed(reason.clone()));
                 }
                 while let Ok(job) = queue.try_recv() {
-                    let _ = job.events.try_send(AskEvent::Failed(reason.clone()));
+                    job.fail(reason.clone());
                 }
             });
         if let Err(err) = spawned {
@@ -100,7 +122,13 @@ async fn run(config: &AgentConfig, queue: Receiver<Job>, current: Shared) -> Res
                     .await?;
                 let scratch = scratch_dir();
                 while let Ok(job) = queue.recv().await {
-                    answer(&connection, &scratch, job, &current).await;
+                    match job {
+                        Job::Ask(job) => answer(&connection, &scratch, job, &current).await,
+                        Job::Models(reply) => {
+                            let models = list_models(&connection, &scratch).await;
+                            let _ = reply.try_send(models);
+                        }
+                    }
                 }
                 Ok(())
             },
@@ -109,20 +137,18 @@ async fn run(config: &AgentConfig, queue: Receiver<Job>, current: Shared) -> Res
         .map_err(|err| err.to_string())
 }
 
-async fn answer(connection: &ConnectionTo<Agent>, scratch: &PathBuf, job: Job, current: &Shared) {
-    let session = match connection
-        .send_request(NewSessionRequest::new(scratch.clone()))
-        .block_task()
-        .await
-    {
-        Ok(response) => response.session_id,
+async fn answer(connection: &ConnectionTo<Agent>, scratch: &PathBuf, job: AskJob, current: &Shared) {
+    let response = match new_session(connection, scratch).await {
+        Ok(response) => response,
         Err(err) => {
-            let _ = job
-                .events
-                .try_send(AskEvent::Failed(format!("Couldn't start a session: {err}")));
+            let _ = job.events.try_send(AskEvent::Failed(err));
             return;
         }
     };
+    let session = response.session_id.clone();
+    if let Some(model) = &job.model {
+        select_model(connection, &response, model).await;
+    }
     *current.lock().unwrap() = Current {
         session: Some(session.clone()),
         events: Some(job.events.clone()),
@@ -153,6 +179,86 @@ async fn answer(connection: &ConnectionTo<Agent>, scratch: &PathBuf, job: Job, c
     if let Some(events) = current.events.take() {
         let _ = events.try_send(event);
     }
+}
+
+async fn new_session(
+    connection: &ConnectionTo<Agent>,
+    scratch: &PathBuf,
+) -> Result<NewSessionResponse, String> {
+    connection
+        .send_request(NewSessionRequest::new(scratch.clone()))
+        .block_task()
+        .await
+        .map_err(|err| format!("Couldn't start a session: {err}"))
+}
+
+async fn list_models(connection: &ConnectionTo<Agent>, scratch: &PathBuf) -> Result<Models, String> {
+    let response = new_session(connection, scratch).await?;
+    let Some((default, choices)) = model_option(&response).and_then(select_values) else {
+        return Ok(Models::default());
+    };
+    Ok(Models {
+        choices,
+        default: Some(default),
+    })
+}
+
+/// Switches a new session to `model`, if the agent offers it. Otherwise the
+/// question still goes ahead with the agent's default.
+async fn select_model(connection: &ConnectionTo<Agent>, session: &NewSessionResponse, model: &str) {
+    let Some(option) = model_option(session) else {
+        log::warn!("agent offers no model choice; using its default");
+        return;
+    };
+    let Some((current, choices)) = select_values(option) else {
+        return;
+    };
+    if current == model {
+        return;
+    }
+    if !choices.iter().any(|choice| choice.id == model) {
+        log::warn!("agent no longer offers model {model}; using its default");
+        return;
+    }
+    let request = SetSessionConfigOptionRequest::new(
+        session.session_id.clone(),
+        option.id.clone(),
+        SessionConfigOptionValue::value_id(model.to_owned()),
+    );
+    if let Err(err) = connection.send_request(request).block_task().await {
+        log::warn!("couldn't switch to model {model}: {err}");
+    }
+}
+
+fn model_option(session: &NewSessionResponse) -> Option<&SessionConfigOption> {
+    session
+        .config_options
+        .as_ref()?
+        .iter()
+        .find(|option| option.category == Some(SessionConfigOptionCategory::Model))
+}
+
+/// The current value and every choice of a select option, groups flattened.
+fn select_values(option: &SessionConfigOption) -> Option<(String, Vec<ModelChoice>)> {
+    let SessionConfigKind::Select(select) = &option.kind else {
+        return None;
+    };
+    let options = match &select.options {
+        SessionConfigSelectOptions::Ungrouped(options) => options.iter().collect::<Vec<_>>(),
+        SessionConfigSelectOptions::Grouped(groups) => {
+            groups.iter().flat_map(|group| &group.options).collect()
+        }
+        _ => return None,
+    };
+    let choices = options
+        .into_iter()
+        .map(|option| ModelChoice {
+            id: option.value.0.to_string(),
+            name: option.name.clone(),
+            description: option.description.clone(),
+        })
+        .collect();
+    Some((select.current_value.0.to_string(), choices))
 }
 
 fn forward_text(current: &Shared, notification: SessionNotification) {

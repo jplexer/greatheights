@@ -23,7 +23,8 @@ Besides apps, the bar understands:
   (↵ copies the result). Exchange rates are the European Central Bank's
   daily reference rates (about 30 currencies), cached for offline use.
 - **Bangs**: `!gh gpui` or `gpui !gh`, using [Kagi's bang list](https://github.com/kagisearch/bangs)
-  (MIT, bundled). Anything else can be searched on Startpage.
+  (MIT, bundled). Anything else can be searched with your chosen engine:
+  Startpage (default), Kagi, Google, DuckDuckGo, Bing or Ecosia.
 - **System commands**: lock, sleep, restart, shut down, log out, empty
   trash, toggle dark mode. Restart, shut down and log out ask for a second ↵.
 
@@ -37,7 +38,8 @@ Any [Agent Client Protocol](https://agentclientprotocol.com) agent works, so
 you can use the Claude, Codex or Gemini subscription you already have. There
 is no default: pick one in the settings window (search "Greatheights
 Settings", or press Tab before choosing one). It offers Claude, Codex,
-Gemini or any custom ACP command, and a Test button to check it works.
+Gemini or any custom ACP command, lists the models the agent offers so you
+can pick one, and has a Test button to check it works.
 
 The agent signs in with its own CLI (for Claude, the Claude Code login).
 Each question runs in an empty scratch folder and every permission request

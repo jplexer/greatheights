@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use async_channel::{Receiver, Sender};
 use greatheights_core::AgentConfig;
 
-use crate::worker::{Job, Worker};
+use crate::worker::{AskJob, Job, Worker};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AskEvent {
@@ -21,6 +21,22 @@ pub enum AskEvent {
     Text(String),
     Done,
     Failed(String),
+}
+
+/// A model the agent offers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelChoice {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Models {
+    /// Empty if the agent doesn't let clients pick a model.
+    pub choices: Vec<ModelChoice>,
+    /// The agent's default for new sessions.
+    pub default: Option<String>,
 }
 
 /// A question in flight. Dropping it cancels the question.
@@ -42,27 +58,40 @@ impl Asker {
     pub fn ask(&self, agent: &AgentConfig, question: &str) -> Ask {
         let (events_tx, events) = async_channel::unbounded();
         let (cancel, cancelled) = async_channel::bounded(1);
-
-        let mut worker = self.worker.lock().unwrap();
-        let reusable = worker
-            .as_ref()
-            .is_some_and(|w| w.config == *agent && w.is_alive());
-        if !reusable {
-            // Replacing the old worker shuts its agent down.
-            *worker = Some(Worker::start(agent.clone()));
-        }
-        let job = Job {
+        let job = Job::Ask(AskJob {
             question: question.to_owned(),
+            model: agent.model.clone(),
             events: events_tx.clone(),
             cancelled,
-        };
-        if worker.as_ref().unwrap().jobs.try_send(job).is_err() {
+        });
+        if self.send(agent, job).is_err() {
             let _ = events_tx.try_send(AskEvent::Failed("The agent isn't running.".into()));
         }
-
         Ask {
             events,
             _cancel: cancel,
         }
+    }
+
+    /// Lists the models the agent offers. Starts the agent if needed.
+    pub fn models(&self, agent: &AgentConfig) -> Receiver<Result<Models, String>> {
+        let (reply, models) = async_channel::bounded(1);
+        if self.send(agent, Job::Models(reply.clone())).is_err() {
+            let _ = reply.try_send(Err("The agent isn't running.".into()));
+        }
+        models
+    }
+
+    fn send(&self, agent: &AgentConfig, job: Job) -> Result<(), ()> {
+        let mut worker = self.worker.lock().unwrap();
+        // The model is chosen per session, so a model change keeps the agent.
+        let reusable = worker
+            .as_ref()
+            .is_some_and(|w| w.config.same_launch(agent) && w.is_alive());
+        if !reusable {
+            // Replacing the old worker shuts its agent down.
+            *worker = Some(Worker::start(agent.clone()));
+        }
+        worker.as_ref().unwrap().jobs.try_send(job).map_err(|_| ())
     }
 }

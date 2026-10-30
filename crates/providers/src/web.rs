@@ -1,13 +1,13 @@
-//! Web search: `!bang` shortcuts, with Startpage as the fallback.
+//! Web search: `!bang` shortcuts, falling back to the chosen search engine.
 //!
 //! The bang list is Kagi's community-maintained one (MIT, see
 //! `data/bangs.LICENSE`), bundled so it works offline. To update it, replace
 //! `data/bangs.json` with the latest from github.com/kagisearch/bangs.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
-use greatheights_core::{Action, Icon, Item, Matcher, Provider, Run};
+use greatheights_core::{Action, Icon, Item, Matcher, Provider, Run, SearchEngine};
 use serde::Deserialize;
 
 const BANGS_JSON: &str = include_str!("../data/bangs.json");
@@ -15,8 +15,6 @@ const BANGS_JSON: &str = include_str!("../data/bangs.json");
 /// An explicit bang is the clearest intent there is, so it goes first.
 const BANG_SCORE: u32 = 20_000;
 
-const FALLBACK_NAME: &str = "Startpage";
-const FALLBACK_URL: &str = "https://www.startpage.com/do/search?q={{{s}}}";
 
 #[derive(Deserialize)]
 struct Bang {
@@ -76,19 +74,22 @@ fn bangs() -> &'static Bangs {
     })
 }
 
-pub struct WebProvider;
-
-impl WebProvider {
-    pub fn new() -> Self {
-        // Parse the bang list now, off the UI thread, rather than on first use.
-        std::thread::spawn(bangs);
-        Self
-    }
+#[derive(Default)]
+pub struct WebProvider {
+    engine: RwLock<SearchEngine>,
 }
 
-impl Default for WebProvider {
-    fn default() -> Self {
-        Self::new()
+impl WebProvider {
+    pub fn new(engine: SearchEngine) -> Self {
+        // Parse the bang list now, off the UI thread, rather than on first use.
+        std::thread::spawn(bangs);
+        Self {
+            engine: RwLock::new(engine),
+        }
+    }
+
+    pub fn set_engine(&self, engine: SearchEngine) {
+        *self.engine.write().unwrap() = engine;
     }
 }
 
@@ -103,8 +104,9 @@ impl Provider for WebProvider {
             return vec![web_item(title, &bang.d, bang.url(&terms), BANG_SCORE)];
         }
 
-        let url = FALLBACK_URL.replace("{{{s}}}", &encode(query, true));
-        let title = format!("Search {FALLBACK_NAME} for “{query}”");
+        let engine = *self.engine.read().unwrap();
+        let url = engine.search_url(&encode(query, true));
+        let title = format!("Search {} for “{query}”", engine.name());
         // Score 0 keeps the fallback below every real match.
         vec![web_item(title, "Web search", url, 0)]
     }
@@ -162,7 +164,9 @@ mod tests {
     use super::*;
 
     fn search(query: &str) -> Item {
-        WebProvider.search(query, &mut Matcher::new(query)).remove(0)
+        WebProvider::default()
+            .search(query, &mut Matcher::new(query))
+            .remove(0)
     }
 
     fn url(item: &Item) -> &str {
@@ -200,6 +204,15 @@ mod tests {
         );
         assert_eq!(item.score, 0);
         assert!(item.id.is_empty());
+    }
+
+    #[test]
+    fn falls_back_to_the_chosen_engine() {
+        let web = WebProvider::default();
+        web.set_engine(SearchEngine::Kagi);
+        let item = web.search("gpui", &mut Matcher::new("gpui")).remove(0);
+        assert_eq!(url(&item), "https://kagi.com/search?q=gpui");
+        assert_eq!(item.title, "Search Kagi for “gpui”");
     }
 
     #[test]

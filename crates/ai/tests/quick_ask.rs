@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use greatheights_ai::{Ask, AskEvent, Asker};
+use greatheights_ai::{Ask, AskEvent, Asker, ModelChoice, Models};
 use greatheights_core::AgentConfig;
 
 fn mock_agent() -> AgentConfig {
@@ -11,6 +11,7 @@ fn mock_agent() -> AgentConfig {
         command: env!("CARGO_BIN_EXE_mock_agent").into(),
         args: Vec::new(),
         env: Default::default(),
+        model: None,
     }
 }
 
@@ -54,6 +55,46 @@ fn reuses_the_agent_and_survives_cancellation() {
 
     // Same agent process (sessions keep counting), still answering.
     assert_eq!(answer(&asker.ask(&mock_agent(), "again")), "Hello (declined)");
+}
+
+#[test]
+fn lists_the_agents_models() {
+    let models = async_io::block_on(Asker::new().models(&mock_agent()).recv()).unwrap();
+    assert_eq!(
+        models,
+        Ok(Models {
+            choices: vec![
+                ModelChoice {
+                    id: "fast".into(),
+                    name: "Fast".into(),
+                    description: None
+                },
+                ModelChoice {
+                    id: "smart".into(),
+                    name: "Smart".into(),
+                    description: Some("Slower, better".into())
+                },
+            ],
+            default: Some("fast".into()),
+        })
+    );
+}
+
+#[test]
+fn asks_with_the_chosen_model() {
+    let asker = Asker::new();
+    assert_eq!(answer(&asker.ask(&mock_agent(), "MODEL")), "model=fast");
+    let smart = AgentConfig {
+        model: Some("smart".into()),
+        ..mock_agent()
+    };
+    assert_eq!(answer(&asker.ask(&smart, "MODEL")), "model=smart");
+    // Unknown models fall back to the default instead of failing.
+    let gone = AgentConfig {
+        model: Some("retired".into()),
+        ..mock_agent()
+    };
+    assert_eq!(answer(&asker.ask(&gone, "MODEL")), "model=fast");
 }
 
 #[test]
