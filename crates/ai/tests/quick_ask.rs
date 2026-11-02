@@ -58,6 +58,35 @@ fn reuses_the_agent_and_survives_cancellation() {
 }
 
 #[test]
+fn follow_ups_continue_the_session() {
+    let asker = Asker::new();
+    let first = asker.ask(&mock_agent(), "SESSION");
+    let session = answer(&first);
+    let follow_up = asker.follow_up(&mock_agent(), &first.chat, "SESSION");
+    assert_eq!(answer(&follow_up), session.replace("#1", "#2"));
+    // A follow-up's chat continues too.
+    let again = asker.follow_up(&mock_agent(), &follow_up.chat, "SESSION");
+    assert_eq!(answer(&again), session.replace("#1", "#3"));
+    // A fresh question doesn't.
+    assert_ne!(answer(&asker.ask(&mock_agent(), "SESSION")), session);
+}
+
+#[test]
+fn follow_ups_fail_once_the_agent_restarts() {
+    let asker = Asker::new();
+    let first = asker.ask(&mock_agent(), "hi");
+    answer(&first);
+    let other = AgentConfig {
+        args: vec!["--restart".into()],
+        ..mock_agent()
+    };
+    match next(&asker.follow_up(&other, &first.chat, "more")) {
+        AskEvent::Failed(err) => assert!(err.contains("restarted"), "unexpected error: {err}"),
+        event => panic!("expected a failure, got {event:?}"),
+    }
+}
+
+#[test]
 fn lists_the_agents_models() {
     let models = async_io::block_on(Asker::new().models(&mock_agent()).recv()).unwrap();
     assert_eq!(

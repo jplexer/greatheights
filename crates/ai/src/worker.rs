@@ -1,7 +1,8 @@
 //! A long-lived connection to one agent process, on its own thread.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
@@ -25,6 +26,10 @@ pub enum Job {
 
 pub struct AskJob {
     pub question: String,
+    /// The session to continue, or `None` for a new one.
+    pub session: Option<String>,
+    /// Where a new session's id goes, so follow-ups can continue it.
+    pub chat: Arc<OnceLock<String>>,
     /// Model id to switch the session to, if not the agent's default.
     pub model: Option<String>,
     pub events: Sender<AskEvent>,
@@ -46,6 +51,8 @@ impl Job {
 }
 
 pub struct Worker {
+    /// Unique per agent process, since sessions don't outlive it.
+    pub id: u64,
     pub config: AgentConfig,
     pub jobs: Sender<Job>,
 }
@@ -86,7 +93,12 @@ impl Worker {
         if let Err(err) = spawned {
             log::error!("couldn't start the Quick Ask thread: {err}");
         }
-        Self { config, jobs }
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+        Self {
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            config,
+            jobs,
+        }
     }
 
     /// False once the agent has exited and its thread has finished.
@@ -138,17 +150,24 @@ async fn run(config: &AgentConfig, queue: Receiver<Job>, current: Shared) -> Res
 }
 
 async fn answer(connection: &ConnectionTo<Agent>, scratch: &PathBuf, job: AskJob, current: &Shared) {
-    let response = match new_session(connection, scratch).await {
-        Ok(response) => response,
-        Err(err) => {
-            let _ = job.events.try_send(AskEvent::Failed(err));
-            return;
+    let (session, text) = match &job.session {
+        Some(session) => (SessionId::new(session.clone()), job.question.clone()),
+        None => {
+            let response = match new_session(connection, scratch).await {
+                Ok(response) => response,
+                Err(err) => {
+                    let _ = job.events.try_send(AskEvent::Failed(err));
+                    return;
+                }
+            };
+            if let Some(model) = &job.model {
+                select_model(connection, &response, model).await;
+            }
+            let _ = job.chat.set(response.session_id.0.to_string());
+            // Only the first question needs the framing; the agent keeps it.
+            (response.session_id, frame(&job.question))
         }
     };
-    let session = response.session_id.clone();
-    if let Some(model) = &job.model {
-        select_model(connection, &response, model).await;
-    }
     *current.lock().unwrap() = Current {
         session: Some(session.clone()),
         events: Some(job.events.clone()),
@@ -157,7 +176,7 @@ async fn answer(connection: &ConnectionTo<Agent>, scratch: &PathBuf, job: AskJob
     let prompt = connection
         .send_request(PromptRequest::new(
             session.clone(),
-            vec![ContentBlock::Text(TextContent::new(frame(&job.question)))],
+            vec![ContentBlock::Text(TextContent::new(text))],
         ))
         .block_task();
     let cancelled = job.cancelled.recv();

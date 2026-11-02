@@ -5,7 +5,8 @@
 //! whether the permission was granted. A prompt containing "SLOW" instead
 //! waits for `session/cancel` and ends the turn as cancelled, one
 //! containing "LONG" slowly streams a few paragraphs, for trying the UI, and
-//! one containing "MODEL" replies with the session's model. Sessions offer
+//! one containing "MODEL" replies with the session's model, and one
+//! containing "SESSION" replies with the session's id and prompt count. Sessions offer
 //! two models, "fast" (the default) and "smart".
 
 use std::collections::HashMap;
@@ -19,6 +20,7 @@ fn main() {
     let mut lines = stdin.lock().lines();
     let mut sessions = 0;
     let mut models: HashMap<String, String> = HashMap::new();
+    let mut prompts: HashMap<String, usize> = HashMap::new();
 
     while let Some(Ok(line)) = lines.next() {
         let Ok(message) = serde_json::from_str::<Value>(&line) else {
@@ -50,6 +52,14 @@ fn main() {
             Some("session/prompt") => {
                 let session = message["params"]["sessionId"].clone();
                 let prompt = message["params"]["prompt"][0]["text"].as_str().unwrap_or("");
+                let name = session.as_str().unwrap_or_default().to_owned();
+                let count = prompts.entry(name.clone()).or_default();
+                *count += 1;
+                if prompt.contains("SESSION") {
+                    chunk(&session, &format!("{name}#{count}"));
+                    reply(&id, json!({ "stopReason": "end_turn" }));
+                    continue;
+                }
                 if prompt.contains("MODEL") {
                     let model = &models[session.as_str().unwrap_or_default()];
                     chunk(&session, &format!("model={model}"));

@@ -52,7 +52,10 @@ override and an option to reopen with the last query.
 
 Press <kbd>Tab</kbd> to ask an AI agent about whatever you typed, or start
 the query with `?`. Answers stream in below the bar with Markdown formatting;
-<kbd>↵</kbd> copies the Markdown.
+<kbd>↵</kbd> copies the Markdown. To continue the chat, press <kbd>Tab</kbd>
+under a finished answer and type a follow-up: it goes to the same agent
+session, so the agent remembers the conversation. The chat ends when the
+launcher closes.
 
 Any [Agent Client Protocol](https://agentclientprotocol.com) agent works, so
 you can use the Claude, Codex or Gemini subscription you already have. There

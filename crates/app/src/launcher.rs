@@ -1,7 +1,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use greatheights_ai::AskEvent;
+use greatheights_ai::{Ask, AskEvent};
 use greatheights_core::{Action, Engine, Icon, Item, Run};
 use gpui::{
     App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable, KeyBinding, MouseMoveEvent,
@@ -9,7 +9,7 @@ use gpui::{
     Window, actions, div, img, prelude::*, px, uniform_list,
 };
 
-use crate::answer::{Answer, Status};
+use crate::answer::{Answer, Status, Turn};
 use crate::input::{InputChanged, TextInput};
 use crate::theme::{self, Theme};
 use crate::window::{AskerHandle, Config};
@@ -34,6 +34,8 @@ const MAX_VISIBLE_ROWS: usize = 9;
 const LIST_PADDING: f32 = 4.;
 /// Queries starting with this ask the agent instead of searching.
 const ASK_PREFIX: char = '?';
+const SEARCH_PLACEHOLDER: &str = "Search…";
+const FOLLOW_UP_PLACEHOLDER: &str = "Ask a follow-up…";
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -67,10 +69,15 @@ pub struct Launcher {
 
 impl Launcher {
     pub fn new(engine: Arc<Engine>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| TextInput::new("Search…", cx));
+        let input = cx.new(|cx| TextInput::new(SEARCH_PLACEHOLDER, cx));
         let subscriptions = vec![
             cx.subscribe_in(&input, window, |this, _, _: &InputChanged, window, cx| {
-                this.update_results(window, cx);
+                if this.following_up() {
+                    // A follow-up being typed; the chat stays.
+                    cx.notify();
+                } else {
+                    this.update_results(window, cx);
+                }
             }),
             // Clicking elsewhere dismisses the launcher, like Spotlight.
             cx.observe_window_activation(window, |_, window, cx| {
@@ -97,10 +104,12 @@ impl Launcher {
     /// Readies the launcher for the next show: an empty bar, or with
     /// `keep_last_query`, the last query without its answer.
     pub fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.answer = None;
+        // A chat ends with the launcher, taking any unsent follow-up along.
+        let chatted = self.following_up();
+        self.end_answer(cx);
         self.confirming = None;
         self.last_mouse = None;
-        if cx.global::<Config>().settings.keep_last_query {
+        if cx.global::<Config>().settings.keep_last_query && !chatted {
             self.update_results(window, cx);
             return;
         }
@@ -136,9 +145,43 @@ impl Launcher {
         cx.defer_in(window, move |this, window, cx| this.ask(question, window, cx));
     }
 
+    fn following_up(&self) -> bool {
+        self.answer.as_ref().is_some_and(|answer| answer.following_up)
+    }
+
+    /// Drops the answer (cancelling it), back to searching.
+    fn end_answer(&mut self, cx: &mut Context<Self>) {
+        if self.answer.take().is_some_and(|answer| answer.following_up) {
+            self.input
+                .update(cx, |input, cx| input.set_placeholder(SEARCH_PLACEHOLDER, cx));
+        }
+    }
+
+    /// Debug aid: `GREATHEIGHTS_FOLLOW_UP` is asked as a follow-up to the
+    /// first answer, and `GREATHEIGHTS_DRAFT` is then typed, unsent.
+    #[cfg(debug_assertions)]
+    fn debug_follow_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let turns = self.answer.as_ref().map_or(0, |answer| answer.turns.len());
+        let text = match turns {
+            1 => std::env::var("GREATHEIGHTS_FOLLOW_UP"),
+            2 => std::env::var("GREATHEIGHTS_DRAFT"),
+            _ => return,
+        };
+        let Ok(text) = text else {
+            return;
+        };
+        cx.defer_in(window, move |this, window, cx| {
+            this.continue_chat(window, cx);
+            this.input.update(cx, |input, cx| input.set_text(text, cx));
+            if turns == 1 {
+                this.send_follow_up(window, cx);
+            }
+        });
+    }
+
     fn update_results(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Editing the query leaves the answer behind (and cancels it).
-        self.answer = None;
+        self.end_answer(cx);
         let query = self.input.read(cx).text().to_owned();
         let results = match query.trim_start().strip_prefix(ASK_PREFIX) {
             Some(question) => vec![ask_item(question.trim(), cx)],
@@ -184,8 +227,13 @@ impl Launcher {
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(answer) = &self.answer {
-            if matches!(answer.status, Status::Done) && !answer.text.is_empty() {
-                cx.write_to_clipboard(ClipboardItem::new_string(answer.text.trim().to_owned()));
+            if answer.following_up && !self.draft(cx).is_empty() {
+                self.send_follow_up(window, cx);
+                return;
+            }
+            let text = answer.latest().text.trim();
+            if answer.is_done() && !text.is_empty() {
+                cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
                 cx.defer(|cx| window::hide(cx));
             }
             return;
@@ -197,8 +245,19 @@ impl Launcher {
         self.run_action(1, window, cx);
     }
 
-    /// Tab asks the agent about whatever is typed.
+    /// Tab asks the agent about whatever is typed. Below a finished answer
+    /// it continues the chat instead.
     fn ask_agent(&mut self, _: &AskAgent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(answer) = &mut self.answer {
+            if answer.following_up {
+                self.send_follow_up(window, cx);
+                return;
+            }
+            if answer.can_follow_up() {
+                self.continue_chat(window, cx);
+                return;
+            }
+        }
         let query = self.input.read(cx).text().to_owned();
         let question = query.trim_start().trim_start_matches(ASK_PREFIX).trim().to_owned();
         if !question.is_empty() {
@@ -213,9 +272,73 @@ impl Launcher {
             self.show_results(vec![setup], window, cx);
             return;
         };
+        self.end_answer(cx);
         let ask = cx.global::<AskerHandle>().0.ask(&agent, &question);
+        let task = self.stream(&ask, window, cx);
+        self.results.clear();
+        self.answer = Some(Answer {
+            agent: agent.display_name(),
+            turns: vec![Turn::new(question)],
+            status: Status::Waiting,
+            chat: ask.chat.clone(),
+            following_up: false,
+            ask: Some(ask),
+            scroll: Default::default(),
+            _task: task,
+        });
+        self.fit_window(window, cx);
+        cx.notify();
+    }
+
+    /// Clears the bar for a follow-up to the answer.
+    fn continue_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(answer) = &mut self.answer else {
+            return;
+        };
+        // First, so clearing the bar doesn't count as a new search.
+        answer.following_up = true;
+        self.input.update(cx, |input, cx| {
+            input.set_placeholder(FOLLOW_UP_PLACEHOLDER, cx);
+            input.set_text("", cx);
+        });
+        // The first question now shows above its answer.
+        self.fit_window(window, cx);
+        cx.notify();
+    }
+
+    fn draft(&self, cx: &App) -> String {
+        self.input.read(cx).text().trim().to_owned()
+    }
+
+    /// Sends what's in the bar as the chat's next question.
+    fn send_follow_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let question = self.draft(cx);
+        let Some(answer) = &self.answer else {
+            return;
+        };
+        if question.is_empty() || !answer.can_follow_up() {
+            return;
+        }
+        let Some(agent) = cx.global::<Config>().settings.agent.clone() else {
+            return;
+        };
+        let ask = cx
+            .global::<AskerHandle>()
+            .0
+            .follow_up(&agent, &answer.chat, &question);
+        let task = self.stream(&ask, window, cx);
+        if let Some(answer) = &mut self.answer {
+            answer.push_turn(question, ask, task);
+        }
+        self.input.update(cx, |input, cx| input.set_text("", cx));
+        self.fit_window(window, cx);
+        cx.notify();
+    }
+
+    /// Feeds `ask`'s answer into the latest turn.
+    fn stream(&self, ask: &Ask, window: &mut Window, cx: &mut Context<Self>) -> gpui::Task<()> {
         let events = ask.events.clone();
-        let task = cx.spawn_in(window, async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 let finished = !matches!(event, AskEvent::Text(_));
                 let applied = this.update_in(cx, |this, window, cx| {
@@ -229,19 +352,7 @@ impl Launcher {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.on_ask_event(AskEvent::Failed("The agent stopped.".into()), window, cx)
             });
-        });
-
-        self.results.clear();
-        self.answer = Some(Answer {
-            agent: agent.display_name(),
-            text: String::new(),
-            blocks: Vec::new(),
-            status: Status::Waiting,
-            ask: Some(ask),
-            _task: task,
-        });
-        self.fit_window(window, cx);
-        cx.notify();
+        })
     }
 
     fn on_ask_event(&mut self, event: AskEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -256,6 +367,8 @@ impl Launcher {
             AskEvent::Done => {
                 answer.status = Status::Done;
                 answer.ask = None;
+                #[cfg(debug_assertions)]
+                self.debug_follow_up(window, cx);
             }
             AskEvent::Failed(err) => {
                 answer.status = Status::Failed(err);
@@ -482,7 +595,9 @@ impl Render for Launcher {
                     .line_height(px(22.))
                     .child(self.input.clone()),
             )
-            .children(self.answer.as_ref().map(|answer| answer.render(theme)))
+            .children(self.answer.as_ref().map(|answer| {
+                answer.render(!self.input.read(cx).text().trim().is_empty(), theme)
+            }))
             .when(self.answer.is_none() && !self.results.is_empty(), |root| {
                 root.child(div().h(px(1.)).flex_none().bg(theme.border_variant))
                     .child(
