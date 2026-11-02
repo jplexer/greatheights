@@ -67,7 +67,21 @@ Each question runs in an empty scratch folder and every permission request
 is declined, so agents can answer but never edit files or run commands.
 
 On Wayland, apps can't register global shortcuts; bind a compositor shortcut
-instead (toggle command coming soon).
+to `greatheights --toggle` instead. It toggles the running launcher, or starts
+one showing if none is running. For example, in Hyprland:
+
+```
+bind = ALT, SPACE, exec, greatheights --toggle
+```
+
+or in Sway:
+
+```
+bindsym Mod1+space exec greatheights --toggle
+```
+
+On GNOME and KDE, add a custom shortcut running the same command in the
+keyboard settings. Launching the app again while it runs also just shows it.
 
 ## Layout
 

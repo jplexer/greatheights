@@ -2,6 +2,7 @@ mod answer;
 mod autostart;
 mod hotkey;
 mod input;
+mod ipc;
 mod launcher;
 mod markdown;
 mod platform;
@@ -22,8 +23,24 @@ use gpui::Application;
 use crate::theme::Theme;
 use crate::window::{AskerHandle, Config, EngineHandle};
 
+/// Toggles the running launcher, or starts one showing.
+const TOGGLE_ARG: &str = "--toggle";
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // The login item starts us in the background; otherwise show the bar so
+    // launching the app visibly does something.
+    let background = args.iter().any(|arg| arg == autostart::BACKGROUND_ARG);
+    let toggle = args.iter().any(|arg| arg == TOGGLE_ARG);
+    // Hand over to the launcher that's already running, if any.
+    let command = if toggle { ipc::Command::Toggle } else { ipc::Command::Show };
+    if !background && ipc::send(command) {
+        return;
+    }
+    if background && ipc::is_running() {
+        return;
+    }
     let config_path = settings_path(&app_dir(dirs::config_dir()));
     // Debug aid: try other settings without touching the real file.
     #[cfg(debug_assertions)]
@@ -32,10 +49,7 @@ fn main() {
         .unwrap_or(config_path);
     let settings = Settings::load(&config_path);
     let engine = Arc::new(build_engine(&settings));
-
-    // The login item starts us in the background; otherwise show the bar so
-    // launching the app visibly does something.
-    let show_at_start = !std::env::args().any(|arg| arg == autostart::BACKGROUND_ARG);
+    let show_at_start = !background;
 
     let app = Application::new();
     // Opening the app again (Finder, Spotlight, `open`) shows the bar.
@@ -50,6 +64,7 @@ fn main() {
         cx.set_global(EngineHandle(engine));
         cx.set_global(AskerHandle(Arc::new(Asker::new())));
         hotkey::init(&settings.hotkey, cx);
+        ipc::listen(cx);
         window::set_config(
             Config {
                 settings,
