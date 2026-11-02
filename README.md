@@ -2,8 +2,6 @@
 
 # greatheights
 
-Created in [T3 Code](https://t3.codes).
-
 A minimal, keyboard-first launcher for macOS, Linux and Windows, built with
 [GPUI](https://gpui.rs).
 
